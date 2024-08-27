@@ -37,6 +37,9 @@ namespace BiomeGate
         internal static ConfigEntry<float> raiseSkillModifier;
         internal static ConfigEntry<bool> showRepeatMessage;
         internal static ConfigEntry<bool> showStartMessage;
+        internal static ConfigEntry<bool> preventBuilding;
+        internal static ConfigEntry<bool> preventExploring;
+        internal static ConfigEntry<bool> preventInteraction;
 
         private void Awake()
         {
@@ -70,6 +73,10 @@ namespace BiomeGate
 
             gatedBiomes = config("Gating", "Biomes", defaultValue: Heightmap.Biome.None, "Biome list.");
             adminPermitted = config("Gating", "Ignore admins", defaultValue: true, "Admins and host will not be affected");
+            preventBuilding = config("Gating", "Prevent building", defaultValue: true, "Prevent usage of hammers, hoe, cultivator");
+            preventExploring = config("Gating", "Prevent exploring", defaultValue: true, "Prevent minimap from exploring");
+            preventInteraction = config("Gating", "Prevent interactions", defaultValue: true, "Prevent interaction with any interactable object");
+            
             damageReceivedModifier = config("Gating", "Damage received modifier", defaultValue: DamageModifier.VeryWeak, "Damage modifier for incoming damage");
             damageDoneModifier = config("Gating", "Damage dealt modifier", defaultValue: 0f, "Damage modifier for damage done by affected players");
             noiseModifier = config("Gating", "Noise modifier", defaultValue: 10f, "Noise modifier. How far away player will be heared.");
@@ -146,6 +153,9 @@ namespace BiomeGate
 
             private static bool Prefix(object[] __args)
             {
+                if (!preventInteraction.Value)
+                    return true;
+
                 Humanoid user = __args.FirstOrDefault(arg => arg is Humanoid) as Humanoid;
                 if (user != null && user.GetSEMan().HaveStatusEffect(SE_BiomeGate.statusEffectBiomeGateHash))
                 {
@@ -162,6 +172,9 @@ namespace BiomeGate
         {
             private static void Prefix(Player __instance, ref PieceTable buildPieces, ref PieceTable __state)
             {
+                if (!preventBuilding.Value)
+                    return;
+
                 if (!__instance.GetSEMan().HaveStatusEffect(SE_BiomeGate.statusEffectBiomeGateHash))
                     return;
 
@@ -183,6 +196,9 @@ namespace BiomeGate
         {
             private static bool Prefix(Player __instance, ref bool __result)
             {
+                if (!preventBuilding.Value)
+                    return true;
+
                 if (!__instance.GetSEMan().HaveStatusEffect(SE_BiomeGate.statusEffectBiomeGateHash))
                     return true;
 
@@ -196,6 +212,9 @@ namespace BiomeGate
         {
             private static void Prefix(Minimap __instance, Player player)
             {
+                if (!preventExploring.Value)
+                    return;
+
                 if (!player.GetSEMan().HaveStatusEffect(SE_BiomeGate.statusEffectBiomeGateHash))
                     return;
 
