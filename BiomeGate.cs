@@ -7,7 +7,6 @@ using System.Reflection;
 using System;
 using System.Linq;
 using static HitData;
-using UnityEngine;
 
 namespace BiomeGate
 {
