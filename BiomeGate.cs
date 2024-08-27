@@ -67,6 +67,8 @@ namespace BiomeGate
 
         private void ConfigInit()
         {
+            config("General", "NexusID", 2877, "Nexus mod ID for updates", false);
+
             modEnabled = config("General", "Enabled", defaultValue: true, "Enable the mod.");
             configLocked = config("General", "Lock Configuration", defaultValue: true, "Configuration is locked and can be changed by server admins only.");
             loggingEnabled = config("General", "Logging enabled", defaultValue: false, "Enable logging. [Not Synced with Server]", false);
