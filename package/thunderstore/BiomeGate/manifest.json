@@ -1,6 +1,6 @@
 {
   "name": "BiomeGate",
-  "version_number": "1.0.0",
+  "version_number": "1.0.1",
   "website_url": "https://github.com/shudnal/BiomeGate",
   "description": "Prevent players from exploring and interacting with selected biomes. Protect your server from racing ahead lovers.",
   "dependencies": ["denikson-BepInExPack_Valheim-5.4.2202"]

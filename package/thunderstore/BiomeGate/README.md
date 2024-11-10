@@ -12,6 +12,8 @@ Player in selected biomes will be affected by status effect which
 
 You can allow admins to ignore effect (enabled by default).
 
+You can allow particular biome if global key is set.
+
 Effects are configurable.
 
 ## Installation (manual)

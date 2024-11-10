@@ -13,9 +13,9 @@ namespace BiomeGate
     [BepInPlugin(pluginID, pluginName, pluginVersion)]
     public class BiomeGate : BaseUnityPlugin
     {
-        const string pluginID = "shudnal.BiomeGate";
-        const string pluginName = "Biome Gate";
-        const string pluginVersion = "1.0.0";
+        public const string pluginID = "shudnal.BiomeGate";
+        public const string pluginName = "Biome Gate";
+        public const string pluginVersion = "1.0.1";
 
         private readonly Harmony harmony = new Harmony(pluginID);
 
@@ -24,22 +24,27 @@ namespace BiomeGate
         public static BiomeGate instance;
 
         public static ConfigEntry<bool> modEnabled;
-        private static ConfigEntry<bool> configLocked;
-        private static ConfigEntry<bool> loggingEnabled;
+        public static ConfigEntry<bool> configLocked;
+        public static ConfigEntry<bool> loggingEnabled;
 
-        private static ConfigEntry<Heightmap.Biome> gatedBiomes;
-        private static ConfigEntry<bool> adminPermitted;
+        public static ConfigEntry<Heightmap.Biome> gatedBiomes;
+        public static ConfigEntry<bool> adminPermitted;
 
-        internal static ConfigEntry<DamageModifier> damageReceivedModifier;
-        internal static ConfigEntry<float> damageDoneModifier;
-        internal static ConfigEntry<float> noiseModifier;
-        internal static ConfigEntry<float> sneakModifier;
-        internal static ConfigEntry<float> raiseSkillModifier;
-        internal static ConfigEntry<bool> showRepeatMessage;
-        internal static ConfigEntry<bool> showStartMessage;
-        internal static ConfigEntry<bool> preventBuilding;
-        internal static ConfigEntry<bool> preventExploring;
-        internal static ConfigEntry<bool> preventInteraction;
+        public static ConfigEntry<DamageModifier> damageReceivedModifier;
+        public static ConfigEntry<float> damageDoneModifier;
+        public static ConfigEntry<float> noiseModifier;
+        public static ConfigEntry<float> sneakModifier;
+        public static ConfigEntry<float> raiseSkillModifier;
+        public static ConfigEntry<bool> showRepeatMessage;
+        public static ConfigEntry<bool> showStartMessage;
+        public static ConfigEntry<bool> preventBuilding;
+        public static ConfigEntry<bool> preventExploring;
+        public static ConfigEntry<bool> preventInteraction;
+
+        public static ConfigEntry<bool> globalKeyPermitted;
+        public static ConfigEntry<string> globalKeyAvailability;
+
+        private static readonly Dictionary<string, string> biomeGlobalKeys = new Dictionary<string, string>();
 
         private void Awake()
         {
@@ -94,6 +99,27 @@ namespace BiomeGate
             raiseSkillModifier.SettingChanged += (sender, args) => SE_BiomeGate.UpdateBiomeGateProperties();
             showRepeatMessage.SettingChanged += (sender, args) => SE_BiomeGate.UpdateBiomeGateProperties();
             showStartMessage.SettingChanged += (sender, args) => SE_BiomeGate.UpdateBiomeGateProperties();
+
+            globalKeyPermitted = config("Gating - Global keys", "Disable gating if global key is set", defaultValue: false, "Admins and host will not be affected");
+            globalKeyAvailability = config("Gating - Global keys", "Biome global keys", defaultValue: "Swamp:defeated_gdking,Mountain:defeated_bonemass,Plains:defeated_dragon,Mistlands:defeated_goblinking,AshLands:defeated_queen,DeepNorth:defeated_fader", "Comma-separated list of biome-globalkey pairs. If globalkey is set biome will not be gated.");
+
+            globalKeyAvailability.SettingChanged += (sender, args) => UpdateGlobalKeysList();
+
+            UpdateGlobalKeysList();
+        }
+
+        private static void UpdateGlobalKeysList()
+        {
+            biomeGlobalKeys.Clear();
+
+            foreach (string biomeKey in globalKeyAvailability.Value.Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries))
+            {
+                string[] pair = biomeKey.Split(new[] { ':' }, StringSplitOptions.RemoveEmptyEntries);
+                if (pair.Length != 2)
+                    continue;
+
+                biomeGlobalKeys[pair[0].Trim()] = pair[1].Trim();
+            };
         }
 
         private static bool IsAdmin()
@@ -126,20 +152,25 @@ namespace BiomeGate
 
             if (Player.m_localPlayer.GetSEMan().HaveStatusEffect(SE_BiomeGate.statusEffectBiomeGateHash))
             {
-                if (gatedBiomes.Value == Heightmap.Biome.None || Player.m_localPlayer.m_currentBiome == Heightmap.Biome.None)
+                if (!modEnabled.Value)
+                    Player.m_localPlayer.GetSEMan().RemoveStatusEffect(SE_BiomeGate.statusEffectBiomeGateHash);
+                else if (gatedBiomes.Value == Heightmap.Biome.None || Player.m_localPlayer.m_currentBiome == Heightmap.Biome.None)
                     Player.m_localPlayer.GetSEMan().RemoveStatusEffect(SE_BiomeGate.statusEffectBiomeGateHash);
                 else if (!gatedBiomes.Value.HasFlag(Player.m_localPlayer.m_currentBiome))
                     Player.m_localPlayer.GetSEMan().RemoveStatusEffect(SE_BiomeGate.statusEffectBiomeGateHash);
                 else if (IsAdmin())
                     Player.m_localPlayer.GetSEMan().RemoveStatusEffect(SE_BiomeGate.statusEffectBiomeGateHash);
+                else if (IsBiomeGlobalKeyEnabled())
+                    Player.m_localPlayer.GetSEMan().RemoveStatusEffect(SE_BiomeGate.statusEffectBiomeGateHash);
             }
-            else
+            else if (modEnabled.Value)
             {
-                if (gatedBiomes.Value.HasFlag(Player.m_localPlayer.m_currentBiome) && !IsAdmin())
+                if (gatedBiomes.Value.HasFlag(Player.m_localPlayer.m_currentBiome) && !IsAdmin() && !IsBiomeGlobalKeyEnabled())
                     Player.m_localPlayer.GetSEMan().AddStatusEffect(SE_BiomeGate.statusEffectBiomeGateHash);
             }
-            
         }
+
+        private static bool IsBiomeGlobalKeyEnabled() => globalKeyPermitted.Value && biomeGlobalKeys.TryGetValue(Player.m_localPlayer.m_currentBiome.ToString(), out string globalKey) && ZoneSystem.instance && ZoneSystem.instance.GetGlobalKey(globalKey);
 
         [HarmonyPatch]
         public static class PreventInteractions
