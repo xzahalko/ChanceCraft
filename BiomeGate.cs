@@ -15,7 +15,7 @@ namespace BiomeGate
     {
         public const string pluginID = "shudnal.BiomeGate";
         public const string pluginName = "Biome Gate";
-        public const string pluginVersion = "1.0.1";
+        public const string pluginVersion = "1.0.2";
 
         private readonly Harmony harmony = new Harmony(pluginID);
 
@@ -40,6 +40,7 @@ namespace BiomeGate
         public static ConfigEntry<bool> preventBuilding;
         public static ConfigEntry<bool> preventExploring;
         public static ConfigEntry<bool> preventInteraction;
+        public static ConfigEntry<bool> showStatusEffectIcon;
 
         public static ConfigEntry<bool> globalKeyPermitted;
         public static ConfigEntry<string> globalKeyAvailability;
@@ -91,6 +92,7 @@ namespace BiomeGate
             raiseSkillModifier = config("Gating", "Raise skill modifier", defaultValue: -100f, "Modifier for skill raise. 0 is normal skill raise. Other status effects can also modify skill raise.");
             showRepeatMessage = config("Gating", "Show repeat message", defaultValue: true, "Show repeated message every 20 seconds");
             showStartMessage = config("Gating", "Show start message", defaultValue: true, "Show message when debuff is applied");
+            showStatusEffectIcon = config("Gating", "Show status effect icon", defaultValue: true, "Show status effect in list when debuff is applied.");
 
             damageReceivedModifier.SettingChanged += (sender, args) => SE_BiomeGate.UpdateBiomeGateProperties();
             damageDoneModifier.SettingChanged += (sender, args) => SE_BiomeGate.UpdateBiomeGateProperties();
@@ -99,6 +101,7 @@ namespace BiomeGate
             raiseSkillModifier.SettingChanged += (sender, args) => SE_BiomeGate.UpdateBiomeGateProperties();
             showRepeatMessage.SettingChanged += (sender, args) => SE_BiomeGate.UpdateBiomeGateProperties();
             showStartMessage.SettingChanged += (sender, args) => SE_BiomeGate.UpdateBiomeGateProperties();
+            showStatusEffectIcon.SettingChanged += (sender, args) => SE_BiomeGate.UpdateBiomeGateProperties();
 
             globalKeyPermitted = config("Gating - Global keys", "Disable gating if global key is set", defaultValue: false, "Admins and host will not be affected");
             globalKeyAvailability = config("Gating - Global keys", "Biome global keys", defaultValue: "Swamp:defeated_gdking,Mountain:defeated_bonemass,Plains:defeated_dragon,Mistlands:defeated_goblinking,AshLands:defeated_queen,DeepNorth:defeated_fader", "Comma-separated list of biome-globalkey pairs. If globalkey is set biome will not be gated.");
@@ -165,7 +168,7 @@ namespace BiomeGate
             }
             else if (modEnabled.Value)
             {
-                if (gatedBiomes.Value.HasFlag(Player.m_localPlayer.m_currentBiome) && !IsAdmin() && !IsBiomeGlobalKeyEnabled())
+                if (gatedBiomes.Value.HasFlag(Player.m_localPlayer.m_currentBiome) && !Player.m_localPlayer.InCutscene() && !Player.m_localPlayer.IsTeleporting() && !IsAdmin() && !IsBiomeGlobalKeyEnabled())
                     Player.m_localPlayer.GetSEMan().AddStatusEffect(SE_BiomeGate.statusEffectBiomeGateHash);
             }
         }
@@ -177,22 +180,20 @@ namespace BiomeGate
         {
             static IEnumerable<MethodBase> TargetMethods()
             {
-                return AppDomain.CurrentDomain.GetAssemblies().Where(x => x.FullName.StartsWith("assembly_valheim"))
-                                                                .SelectMany(s => s.GetTypes())
-                                                                .Where(p => typeof(Interactable).IsAssignableFrom(p))
-                                                                .Where(p => p.Name != "Interactable")
-                                                                .SelectMany(t => new List<MethodBase>() { AccessTools.Method(t, "Interact"), AccessTools.Method(t, "UseItem") });
+                return typeof(Player).Assembly.GetTypes()
+                    .Where(p => typeof(Interactable).IsAssignableFrom(p))
+                    .Where(p => p.Name != "Interactable")
+                    .SelectMany(t => new List<MethodBase>() { AccessTools.Method(t, "Interact"), AccessTools.Method(t, "UseItem") });
             }
 
-            private static bool Prefix(object[] __args)
+            private static bool Prefix(Humanoid __0)
             {
                 if (!preventInteraction.Value)
                     return true;
 
-                Humanoid user = __args.FirstOrDefault(arg => arg is Humanoid) as Humanoid;
-                if (user != null && user.GetSEMan().HaveStatusEffect(SE_BiomeGate.statusEffectBiomeGateHash))
+                if (__0 != null && __0.GetSEMan().HaveStatusEffect(SE_BiomeGate.statusEffectBiomeGateHash))
                 {
-                    user.Message(MessageHud.MessageType.Center, "$msg_nobuildzone");
+                    __0.Message(MessageHud.MessageType.Center, "$msg_nobuildzone");
                     return false;
                 }
 

@@ -34,6 +34,10 @@ namespace BiomeGate
             if (statusEffect == null)
                 return;
 
+            statusEffect.m_icon = showStatusEffectIcon.Value ? 
+                                ObjectDB.instance.m_StatusEffects.Find(se => se.m_icon != null && se.m_icon.name.IndexOf("immobilized") != -1)?.m_icon
+                                : null;
+
             statusEffect.m_noiseModifier = noiseModifier.Value;
             statusEffect.m_stealthModifier = sneakModifier.Value;
             statusEffect.m_damageModifier = damageDoneModifier.Value;
