@@ -15,7 +15,7 @@ namespace BiomeGate
     {
         public const string pluginID = "shudnal.BiomeGate";
         public const string pluginName = "Biome Gate";
-        public const string pluginVersion = "1.0.2";
+        public const string pluginVersion = "1.0.3";
 
         private readonly Harmony harmony = new Harmony(pluginID);
 
@@ -175,6 +175,8 @@ namespace BiomeGate
 
         private static bool IsBiomeGlobalKeyEnabled() => globalKeyPermitted.Value && biomeGlobalKeys.TryGetValue(Player.m_localPlayer.m_currentBiome.ToString(), out string globalKey) && ZoneSystem.instance && ZoneSystem.instance.GetGlobalKey(globalKey);
 
+        private static bool IsGated(Humanoid human) => human is Player player && player.GetSEMan().HaveStatusEffect(SE_BiomeGate.statusEffectBiomeGateHash) && Ship.GetLocalShip() == null;
+
         [HarmonyPatch]
         public static class PreventInteractions
         {
@@ -183,6 +185,10 @@ namespace BiomeGate
                 return typeof(Player).Assembly.GetTypes()
                     .Where(p => typeof(Interactable).IsAssignableFrom(p))
                     .Where(p => p.Name != "Interactable")
+                    .Where(p => p.Name != "Ladder")
+                    .Where(p => p.Name != "ShipControlls")
+                    .Where(p => p.Name != "Sadle")
+                    .Where(p => p.Name != "Chair")
                     .SelectMany(t => new List<MethodBase>() { AccessTools.Method(t, "Interact"), AccessTools.Method(t, "UseItem") });
             }
 
@@ -191,7 +197,7 @@ namespace BiomeGate
                 if (!preventInteraction.Value)
                     return true;
 
-                if (__0 != null && __0.GetSEMan().HaveStatusEffect(SE_BiomeGate.statusEffectBiomeGateHash))
+                if (__0 != null && IsGated(__0))
                 {
                     __0.Message(MessageHud.MessageType.Center, "$msg_nobuildzone");
                     return false;
@@ -209,7 +215,7 @@ namespace BiomeGate
                 if (!preventBuilding.Value)
                     return;
 
-                if (!__instance.GetSEMan().HaveStatusEffect(SE_BiomeGate.statusEffectBiomeGateHash))
+                if (!IsGated(__instance))
                     return;
 
                 __state = buildPieces;
@@ -233,7 +239,7 @@ namespace BiomeGate
                 if (!preventBuilding.Value)
                     return true;
 
-                if (!__instance.GetSEMan().HaveStatusEffect(SE_BiomeGate.statusEffectBiomeGateHash))
+                if (!IsGated(__instance))
                     return true;
 
                 __result = false;
@@ -249,7 +255,7 @@ namespace BiomeGate
                 if (!preventExploring.Value)
                     return;
 
-                if (!player.GetSEMan().HaveStatusEffect(SE_BiomeGate.statusEffectBiomeGateHash))
+                if (!IsGated(player))
                     return;
 
                 __instance.m_exploreTimer = 0;
