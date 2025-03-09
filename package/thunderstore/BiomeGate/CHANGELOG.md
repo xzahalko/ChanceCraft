@@ -1,3 +1,7 @@
+# 1.0.4
+* patch 0.220.3
+* ServerSync updated
+
 # 1.0.3
 * minimap exploring, hammer usage and interacting with objects will not be restricted while on a ship
 * ladders, boat rudder, saddle and chairs will always be available to interact

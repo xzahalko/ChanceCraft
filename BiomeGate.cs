@@ -15,7 +15,7 @@ namespace BiomeGate
     {
         public const string pluginID = "shudnal.BiomeGate";
         public const string pluginName = "Biome Gate";
-        public const string pluginVersion = "1.0.3";
+        public const string pluginVersion = "1.0.4";
 
         private readonly Harmony harmony = new Harmony(pluginID);
 
