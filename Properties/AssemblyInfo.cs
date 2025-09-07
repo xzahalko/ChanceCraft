@@ -5,12 +5,12 @@ using System.Runtime.InteropServices;
 // General Information about an assembly is controlled through the following
 // set of attributes. Change these attribute values to modify the information
 // associated with an assembly.
-[assembly: AssemblyTitle(BiomeGate.BiomeGate.pluginName)]
+[assembly: AssemblyTitle("ChanceCraft")]
 [assembly: AssemblyDescription("")]
 [assembly: AssemblyConfiguration("")]
 [assembly: AssemblyCompany("")]
-[assembly: AssemblyProduct(BiomeGate.BiomeGate.pluginName)]
-[assembly: AssemblyCopyright("Copyright ©  2024")]
+[assembly: AssemblyProduct("ChanceCraft")]
+[assembly: AssemblyCopyright("Copyright ©  2025")]
 [assembly: AssemblyTrademark("")]
 [assembly: AssemblyCulture("")]
 
@@ -20,7 +20,8 @@ using System.Runtime.InteropServices;
 [assembly: ComVisible(false)]
 
 // The following GUID is for the ID of the typelib if this project is exposed to COM
-[assembly: Guid("b8f1a3c4-5dcf-4df6-899e-73f354a55c84")]
+[assembly: Guid("4BA1E0D1-50C4-4C46-92A7-AD47D0717105")]
+
 
 // Version information for an assembly consists of the following four values:
 //
@@ -32,5 +33,5 @@ using System.Runtime.InteropServices;
 // You can specify all the values or you can default the Build and Revision Numbers
 // by using the '*' as shown below:
 // [assembly: AssemblyVersion("1.0.*")]
-[assembly: AssemblyVersion(BiomeGate.BiomeGate.pluginVersion)]
-[assembly: AssemblyFileVersion(BiomeGate.BiomeGate.pluginVersion)]
+[assembly: AssemblyVersion("1.0.0.0")]
+[assembly: AssemblyFileVersion("1.0.0.0")]
