@@ -57,10 +57,11 @@ namespace ChanceCraft
             weaponSuccessChance = Config.Bind("General", "WeaponSuccessChance", 0.6f, new ConfigDescription("Chance to successfully craft weapons (0.0 - 1.0)", new AcceptableValueRange<float>(0f, 1f)));
             armorSuccessChance = Config.Bind("General", "ArmorSuccessChance", 0.6f, new ConfigDescription("Chance to successfully craft armors (0.0 - 1.0)", new AcceptableValueRange<float>(0f, 1f)));
             arrowSuccessChance = Config.Bind("General", "ArrowSuccessChance", 0.6f, new ConfigDescription("Chance to successfully craft arrows (0.0 - 1.0)", new AcceptableValueRange<float>(0f, 1f)));
-            myBossEithkyrStrength = Config.Bind("General", "Eithkyr stength", 0.6f, new ConfigDescription("Strength of Eithkyr (0.0 - 1.0)", new AcceptableValueRange<float>(0f, 1f)));
+            myBossEithkyrStrength = Config.Bind("General", "Eithkyr strength", 0.6f, new ConfigDescription("Strength of Eithkyr (0.0 - 1.0)", new AcceptableValueRange<float>(0f, 1f)));
             Logger.LogInfo($"ChanceCraft plugin loaded. Crafting weapons success chance set to {weaponSuccessChance.Value * 100}%.");
             Logger.LogInfo($"ChanceCraft plugin loaded. Crafting armors success chance set to {armorSuccessChance.Value * 100}%.");
             Logger.LogInfo($"ChanceCraft plugin loaded. Crafting arrow success chance set to {arrowSuccessChance.Value * 100}%.");
+            Logger.LogInfo($"ChanceCraft plugin loaded. Eithkyr boss strength set to {myBossEithkyrStrength.Value * 100}%.");
 
             UnityEngine.Debug.LogWarning("[ChanceCraft] Awake called!");
 
@@ -453,5 +454,28 @@ namespace ChanceCraft
         //        return;
         //    }
         //}
+
+        [HarmonyPatch(typeof(Character), "Awake")]
+        static class CharacterAwakePatch
+        {
+            [UsedImplicitly]
+            static void Postfix(Character __instance)
+            {
+                // Check if this is Eithkyr boss
+                if (__instance != null && __instance.name != null && 
+                    __instance.name.Contains("Eikthyr") && __instance.IsBoss())
+                {
+                    // Apply strength modifier to boss stats
+                    float strengthMultiplier = myBossEithkyrStrength.Value;
+                    
+                    // Modify health
+                    __instance.SetMaxHealth(__instance.GetMaxHealth() * strengthMultiplier);
+                    __instance.SetHealth(__instance.GetMaxHealth());
+                    
+                    // Log the modification
+                    UnityEngine.Debug.LogWarning($"[ChanceCraft] Eikthyr boss strength modified by {strengthMultiplier:F2} - Health: {__instance.GetMaxHealth()}");
+                }
+            }
+        }
     }
 }
