@@ -65,7 +65,7 @@ namespace ChanceCraft
             UnityEngine.Debug.LogWarning("[ChanceCraft] Awake called!");
 
             myBossEithkyrStrength.SettingChanged += (sender, args) => {
-                UpdateBossStrength(instance);
+                UpdateBossStrength();
             };
 
             try
@@ -101,15 +101,26 @@ namespace ChanceCraft
             UnityEngine.Debug.LogWarning("[ChanceCraft] OnEnable called! Harmony.DEBUG enabled.");
         }
 
-        public void UpdateBossStrength(ChanceCraft instance)
+        public void UpdateBossStrength()
         {
-            var eikthyr = instance.GetPrefab("Eikthyr");
+            var eikthyr = Jotunn.Managers.PrefabManager.Instance.GetPrefab("Eikthyr");
             if (eikthyr != null)
             {
                 var character = eikthyr.GetComponent<Character>();
-                character.m_health = myBossEithkyrStrength.Value; // Or another relevant stat
+                if (character != null)
+                {
+                    character.m_health = myBossEithkyrStrength.Value*1000;
+                    UnityEngine.Debug.LogWarning($"[ChanceCraft] Eikthyr health set to {myBossEithkyrStrength.Value}");
+                }
+                else
+                {
+                    UnityEngine.Debug.LogWarning("[ChanceCraft] Eikthyr prefab does not have a Character component!");
+                }
             }
-            UnityEngine.Debug.LogWarning($"[ChanceCraft] Eikthyr strength increased by {myBossEithkyrStrength.Value} to {boss.Strength}");
+            else
+            {
+                UnityEngine.Debug.LogWarning("[ChanceCraft] Eikthyr prefab not found!");
+            }
         }
 
         public static void RemoveCraftedItem(Player player, Recipe recipe)

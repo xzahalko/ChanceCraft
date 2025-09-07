@@ -59,6 +59,9 @@
     <Reference Include="BepInEx">
       <HintPath>C:\Users\Ondra\source\repos\ValheimMod\ValheimMod\Libs\BepInEx.dll</HintPath>
     </Reference>
+    <Reference Include="Jotunn">
+      <HintPath>C:\Users\Ondra\source\repos\ValheimMod\ValheimMod\Libs\Jotunn.dll</HintPath>
+    </Reference>
     <Reference Include="ServerSync, Version=1.0.0.0, Culture=neutral, processorArchitecture=MSIL">
       <SpecificVersion>False</SpecificVersion>
       <HintPath>Libs\ServerSync.dll</HintPath>
