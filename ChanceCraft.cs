@@ -29,7 +29,7 @@ namespace ChanceCraft
 
         private readonly Harmony harmony = new Harmony(pluginID);
 
-//        internal static readonly ConfigSync configSync = new ConfigSync(pluginID) { DisplayName = pluginName, CurrentVersion = pluginVersion, MinimumRequiredVersion = pluginVersion };
+        //        internal static readonly ConfigSync configSync = new ConfigSync(pluginID) { DisplayName = pluginName, CurrentVersion = pluginVersion, MinimumRequiredVersion = pluginVersion };
 
         public static ChanceCraft instance;
 
@@ -38,11 +38,11 @@ namespace ChanceCraft
         public static ConfigEntry<bool> loggingEnabled;
 
         private static ConfigEntry<bool> _loggingEnabled;
-        
+
         private Harmony _harmony;
         private static bool IsDoCraft;
 
-       [UsedImplicitly]
+        [UsedImplicitly]
         void Awake()
         {
             _harmony = Harmony.CreateAndPatchAll(Assembly.GetExecutingAssembly(), "ChanceCraft");
@@ -63,6 +63,10 @@ namespace ChanceCraft
             Logger.LogInfo($"ChanceCraft plugin loaded. Crafting arrow success chance set to {arrowSuccessChance.Value * 100}%.");
 
             UnityEngine.Debug.LogWarning("[ChanceCraft] Awake called!");
+
+            myBossEithkyrStrength.SettingChanged += (sender, args) => {
+                UpdateBossStrength(instance);
+            };
 
             try
             {
@@ -95,6 +99,17 @@ namespace ChanceCraft
         {
             Harmony.DEBUG = true;
             UnityEngine.Debug.LogWarning("[ChanceCraft] OnEnable called! Harmony.DEBUG enabled.");
+        }
+
+        public void UpdateBossStrength(ChanceCraft instance)
+        {
+            var eikthyr = instance.GetPrefab("Eikthyr");
+            if (eikthyr != null)
+            {
+                var character = eikthyr.GetComponent<Character>();
+                character.m_health = myBossEithkyrStrength.Value; // Or another relevant stat
+            }
+            UnityEngine.Debug.LogWarning($"[ChanceCraft] Eikthyr strength increased by {myBossEithkyrStrength.Value} to {boss.Strength}");
         }
 
         public static void RemoveCraftedItem(Player player, Recipe recipe)
@@ -199,7 +214,7 @@ namespace ChanceCraft
             // Only remove resources for the first requirement (not all)
             var req = selectedRecipe.m_resources.FirstOrDefault(r =>
                 r?.m_resItem != null &&
-                !string.IsNullOrEmpty(r.m_resItem.m_itemData?.m_shared?.m_name) &&`
+                !string.IsNullOrEmpty(r.m_resItem.m_itemData?.m_shared?.m_name) &&
                 (string.IsNullOrEmpty(craftedItemName) || r.m_resItem.m_itemData.m_shared.m_name != craftedItemName)
             );
 
