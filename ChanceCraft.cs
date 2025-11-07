@@ -57,7 +57,7 @@ namespace ChanceCraft
             weaponSuccessChance = Config.Bind("General", "WeaponSuccessChance", 0.6f, new ConfigDescription("Chance to successfully craft weapons (0.0 - 1.0)", new AcceptableValueRange<float>(0f, 1f)));
             armorSuccessChance = Config.Bind("General", "ArmorSuccessChance", 0.6f, new ConfigDescription("Chance to successfully craft armors (0.0 - 1.0)", new AcceptableValueRange<float>(0f, 1f)));
             arrowSuccessChance = Config.Bind("General", "ArrowSuccessChance", 0.6f, new ConfigDescription("Chance to successfully craft arrows (0.0 - 1.0)", new AcceptableValueRange<float>(0f, 1f)));
-            myBossEithkyrStrength = Config.Bind("General", "Eithkyr stength", 0.6f, new ConfigDescription("Strength of Eithkyr (0.0 - 1.0)", new AcceptableValueRange<float>(0f, 1f)));
+//            myBossEithkyrStrength = Config.Bind("General", "Eithkyr stength", 0.6f, new ConfigDescription("Strength of Eithkyr (0.0 - 1.0)", new AcceptableValueRange<float>(0f, 1f)));
             Logger.LogInfo($"ChanceCraft plugin loaded. Crafting weapons success chance set to {weaponSuccessChance.Value * 100}%.");
             Logger.LogInfo($"ChanceCraft plugin loaded. Crafting armors success chance set to {armorSuccessChance.Value * 100}%.");
             Logger.LogInfo($"ChanceCraft plugin loaded. Crafting arrow success chance set to {arrowSuccessChance.Value * 100}%.");
@@ -165,25 +165,154 @@ namespace ChanceCraft
             }
         }
 
+        // Modified Harmony patch to suppress default resource removal by temporarily clearing selectedRecipe.m_resources
         [HarmonyPatch(typeof(InventoryGui), "DoCrafting")]
         static class InventoryGuiDoCraftingPatch
         {
+            // Store saved resources per-recipe so we can restore them in Postfix
+            private static readonly Dictionary<Recipe, object> _savedResources = new Dictionary<Recipe, object>();
 
             [UsedImplicitly]
             static void Prefix(InventoryGui __instance)
             {
                 IsDoCraft = true;
+
+                try
+                {
+                    // Get the selected recipe (same logic used elsewhere)
+                    var selectedRecipeField = typeof(InventoryGui).GetField("m_selectedRecipe", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                    if (selectedRecipeField == null) return;
+
+                    object value = selectedRecipeField.GetValue(__instance);
+                    Recipe selectedRecipe = null;
+                    if (value != null && value.GetType().Name == "RecipeDataPair")
+                    {
+                        var recipeProp = value.GetType().GetProperty("Recipe", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                        if (recipeProp != null)
+                            selectedRecipe = recipeProp.GetValue(value) as Recipe;
+                    }
+                    else
+                    {
+                        selectedRecipe = value as Recipe;
+                    }
+
+                    if (selectedRecipe == null) return;
+
+                    // Only suppress default removal for eligible item types (same eligibility as TrySpawnCraftEffect)
+                    var itemType = selectedRecipe.m_item?.m_itemData?.m_shared?.m_itemType;
+                    bool isEligible =
+                        itemType == ItemDrop.ItemData.ItemType.OneHandedWeapon ||
+                        itemType == ItemDrop.ItemData.ItemType.TwoHandedWeapon ||
+                        itemType == ItemDrop.ItemData.ItemType.Bow ||
+                        itemType == ItemDrop.ItemData.ItemType.TwoHandedWeaponLeft ||
+                        itemType == ItemDrop.ItemData.ItemType.Shield ||
+                        itemType == ItemDrop.ItemData.ItemType.Helmet ||
+                        itemType == ItemDrop.ItemData.ItemType.Chest ||
+                        itemType == ItemDrop.ItemData.ItemType.Legs ||
+                        itemType == ItemDrop.ItemData.ItemType.Ammo;
+
+                    if (!isEligible) return;
+
+                    // Find the m_resources field on Recipe and temporarily replace it with an empty collection,
+                    // so InventoryGui.DoCrafting will not remove the materials itself.
+                    var resourcesField = selectedRecipe.GetType().GetField("m_resources", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                    if (resourcesField == null) return;
+
+                    var resourcesObj = resourcesField.GetValue(selectedRecipe);
+                    if (resourcesObj == null) return;
+
+                    lock (_savedResources)
+                    {
+                        // Save original resources for restore in Postfix
+                        if (!_savedResources.ContainsKey(selectedRecipe))
+                            _savedResources[selectedRecipe] = resourcesObj;
+                    }
+
+                    // Create an empty instance matching the field type
+                    Type fieldType = resourcesField.FieldType;
+                    object empty = null;
+                    if (fieldType.IsArray)
+                    {
+                        empty = Array.CreateInstance(fieldType.GetElementType(), 0);
+                    }
+                    else if (fieldType.IsGenericType && fieldType.GetGenericTypeDefinition() == typeof(List<>))
+                    {
+                        empty = Activator.CreateInstance(fieldType); // new List<T>()
+                    }
+                    // Otherwise we don't know how to create an empty collection; in that case leave it unchanged.
+
+                    if (empty != null)
+                    {
+                        resourcesField.SetValue(selectedRecipe, empty);
+                        UnityEngine.Debug.LogWarning("[ChanceCraft] Temporarily cleared selectedRecipe.m_resources to suppress default removal.");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    UnityEngine.Debug.LogWarning($"[ChanceCraft] Exception in DoCrafting Prefix suppression logic: {ex}");
+                }
             }
 
             [UsedImplicitly]
             static void Postfix(InventoryGui __instance, Player player)
             {
-                Recipe recept;
-                recept = ChanceCraft.TrySpawnCraftEffect(__instance);
-                IsDoCraft = false;
-//                CraftedItem = null;
+                // Restore saved m_resources (if any) before we run TrySpawnCraftEffect so our plugin logic sees the original recipe
+                try
+                {
+                    var selectedRecipeField = typeof(InventoryGui).GetField("m_selectedRecipe", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                    if (selectedRecipeField != null)
+                    {
+                        object value = selectedRecipeField.GetValue(__instance);
+                        Recipe selectedRecipe = null;
+                        if (value != null && value.GetType().Name == "RecipeDataPair")
+                        {
+                            var recipeProp = value.GetType().GetProperty("Recipe", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                            if (recipeProp != null)
+                                selectedRecipe = recipeProp.GetValue(value) as Recipe;
+                        }
+                        else
+                        {
+                            selectedRecipe = value as Recipe;
+                        }
 
-                if (player != null && recept != null )
+                        if (selectedRecipe != null)
+                        {
+                            lock (_savedResources)
+                            {
+                                if (_savedResources.TryGetValue(selectedRecipe, out var saved))
+                                {
+                                    var resourcesField = selectedRecipe.GetType().GetField("m_resources", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                                    if (resourcesField != null)
+                                    {
+                                        resourcesField.SetValue(selectedRecipe, saved);
+                                        UnityEngine.Debug.LogWarning("[ChanceCraft] Restored selectedRecipe.m_resources after DoCrafting.");
+                                    }
+                                    _savedResources.Remove(selectedRecipe);
+                                }
+                            }
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    UnityEngine.Debug.LogWarning($"[ChanceCraft] Exception restoring resources in DoCrafting Postfix: {ex}");
+                }
+
+                // Clear the IsDoCraft flag so our TrySpawnCraftEffect and RemoveRequiredResources will run normally
+                IsDoCraft = false;
+
+                // Now run our chance-crafting logic
+                Recipe recept = null;
+                try
+                {
+                    recept = ChanceCraft.TrySpawnCraftEffect(__instance);
+                }
+                catch (Exception ex)
+                {
+                    UnityEngine.Debug.LogWarning($"[ChanceCraft] Exception while running TrySpawnCraftEffect in DoCrafting Postfix: {ex}");
+                }
+
+                if (player != null && recept != null)
                 {
                     UnityEngine.Debug.LogWarning("[ChanceCraft] Got crafted item, removing !");
                     ChanceCraft.RemoveCraftedItem(player, recept);
@@ -215,6 +344,14 @@ namespace ChanceCraft
             if (player == null || selectedRecipe == null) return;
             var inventory = player.GetInventory();
             if (inventory == null) return;
+
+            // If we're inside InventoryGui.DoCrafting (patched Prefix sets IsDoCraft = true),
+            // the game will already remove the required materials. Skip our removal to avoid double-removal.
+            if (IsDoCraft)
+            {
+                UnityEngine.Debug.LogWarning("[ChanceCraft] Skipping RemoveRequiredResources because DoCrafting is in progress (avoids double removal).");
+                return;
+            }
 
             // Preserve existing logic to respect craft upgrade multiplier if present
             var craftUpgradeField = typeof(InventoryGui).GetField("m_craftUpgrade", BindingFlags.Instance | BindingFlags.NonPublic);
