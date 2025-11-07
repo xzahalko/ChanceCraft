@@ -168,24 +168,26 @@ namespace ChanceCraft
         // --- Modified parts of ChanceCraft.cs: Harmony patch and RemoveRequiredResources ---
 
         // Harmony patch for InventoryGui.DoCrafting: suppress default resource removal for eligible recipes
+        // --- InventoryGui.DoCrafting patch (replace existing class) ---
         [HarmonyPatch(typeof(InventoryGui), "DoCrafting")]
         static class InventoryGuiDoCraftingPatch
         {
-            // Keep saved m_resources (original collection) per Recipe instance so we can restore it.
             private static readonly Dictionary<Recipe, object> _savedResources = new Dictionary<Recipe, object>();
 
-            // NOTE: per-call upgrade flag. Set in Prefix and consumed in Postfix to avoid timing/keying issues.
-            private static volatile bool _lastDoCraftWasUpgrade = false;
+            // Per-call state (reset at Prefix)
+            private static bool _suppressedThisCall = false;
+            private static Recipe _savedRecipeForCall = null;
 
             [UsedImplicitly]
             static void Prefix(InventoryGui __instance)
             {
-                IsDoCraft = true;
-                _lastDoCraftWasUpgrade = false; // reset at start of call
+                // reset per-call state
+                _suppressedThisCall = false;
+                _savedRecipeForCall = null;
 
                 try
                 {
-                    // Get the selected recipe (handle RecipeDataPair wrapper)
+                    // get the selected recipe object (handle RecipeDataPair wrapper)
                     var selectedRecipeField = typeof(InventoryGui).GetField("m_selectedRecipe", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
                     if (selectedRecipeField == null) return;
 
@@ -204,7 +206,10 @@ namespace ChanceCraft
 
                     if (selectedRecipe == null) return;
 
-                    // Read current craft upgrade value from InventoryGui and set the per-call flag.
+                    // Save exact recipe instance for the call (so Postfix uses same object)
+                    _savedRecipeForCall = selectedRecipe;
+
+                    // Detect upgrade early (do NOT touch m_resources if this is an upgrade)
                     var craftUpgradeField = typeof(InventoryGui).GetField("m_craftUpgrade", BindingFlags.Instance | BindingFlags.NonPublic);
                     if (craftUpgradeField != null)
                     {
@@ -213,16 +218,67 @@ namespace ChanceCraft
                             object cv = craftUpgradeField.GetValue(__instance);
                             if (cv is int v && v > 1)
                             {
-                                _lastDoCraftWasUpgrade = true;
+                                // upgrade — let game handle it, do not suppress
+                                return;
                             }
                         }
-                        catch
-                        {
-                            // ignore read failure; leave flag false
-                        }
+                        catch { /* ignore */ }
                     }
 
-                    // Only suppress default removal for eligible item types (we want to control these)
+                    // Build positive requirements list (skip zero amounts). If only one valid requirement -> don't suppress.
+                    var resourcesField = selectedRecipe.GetType().GetField("m_resources", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                    if (resourcesField == null) return;
+                    var resourcesObj = resourcesField.GetValue(selectedRecipe) as System.Collections.IEnumerable;
+                    if (resourcesObj == null) return;
+
+                    var resourceList = resourcesObj.Cast<object>().ToList();
+
+                    // Reflection helpers
+                    object GetMember(object obj, string name)
+                    {
+                        if (obj == null) return null;
+                        var t = obj.GetType();
+                        var f = t.GetField(name, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                        if (f != null) return f.GetValue(obj);
+                        var p = t.GetProperty(name, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                        if (p != null) return p.GetValue(obj);
+                        return null;
+                    }
+                    object GetNested(object obj, params string[] names)
+                    {
+                        object cur = obj;
+                        foreach (var n in names)
+                        {
+                            if (cur == null) return null;
+                            cur = GetMember(cur, n);
+                        }
+                        return cur;
+                    }
+                    int ToInt(object v)
+                    {
+                        if (v == null) return 0;
+                        try { return Convert.ToInt32(v); } catch { return 0; }
+                    }
+
+                    var validReqs = new List<object>();
+                    foreach (var req in resourceList)
+                    {
+                        var nameObj = GetNested(req, "m_resItem", "m_itemData", "m_shared", "m_name");
+                        string rname = nameObj as string;
+                        if (string.IsNullOrEmpty(rname)) continue;
+                        int ramount = ToInt(GetMember(req, "m_amount"));
+                        if (ramount <= 0) continue;
+                        validReqs.Add(req);
+                    }
+
+                    // Only suppress when recipe has multiple positive requirements (plugin's keep-one-on-fail behavior)
+                    if (validReqs.Count <= 1)
+                    {
+                        // don't suppress single-resource recipes (lets the game remove them and avoids upgrade interference)
+                        return;
+                    }
+
+                    // Eligible item types filter (optional; preserve previous behavior)
                     var itemType = selectedRecipe.m_item?.m_itemData?.m_shared?.m_itemType;
                     bool isEligible =
                         itemType == ItemDrop.ItemData.ItemType.OneHandedWeapon ||
@@ -237,12 +293,6 @@ namespace ChanceCraft
 
                     if (!isEligible) return;
 
-                    var resourcesField = selectedRecipe.GetType().GetField("m_resources", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-                    if (resourcesField == null) return;
-
-                    var resourcesObj = resourcesField.GetValue(selectedRecipe);
-                    if (resourcesObj == null) return;
-
                     // Save original resources so we can restore in Postfix
                     lock (_savedResources)
                     {
@@ -250,103 +300,83 @@ namespace ChanceCraft
                             _savedResources[selectedRecipe] = resourcesObj;
                     }
 
-                    // Create an empty collection matching the field type so DoCrafting doesn't remove anything.
+                    // Replace m_resources with an empty collection (so the game's DoCrafting does not remove materials)
                     Type fieldType = resourcesField.FieldType;
                     object empty = null;
                     if (fieldType.IsArray)
-                    {
                         empty = Array.CreateInstance(fieldType.GetElementType(), 0);
-                    }
                     else if (fieldType.IsGenericType && fieldType.GetGenericTypeDefinition() == typeof(List<>))
-                    {
                         empty = Activator.CreateInstance(fieldType);
-                    }
 
                     if (empty != null)
                     {
                         resourcesField.SetValue(selectedRecipe, empty);
-                        UnityEngine.Debug.LogWarning("[ChanceCraft] Temporarily cleared selectedRecipe.m_resources to suppress default removal.");
+                        _suppressedThisCall = true;
+                        // mark IsDoCraft only if we suppressed (so other code knows)
+                        IsDoCraft = true;
                     }
                 }
                 catch (Exception ex)
                 {
-                    UnityEngine.Debug.LogWarning($"[ChanceCraft] Exception in DoCrafting Prefix suppression: {ex}");
+                    UnityEngine.Debug.LogWarning($"[ChanceCraft] Prefix exception: {ex}");
+                    _suppressedThisCall = false;
+                    _savedRecipeForCall = null;
+                    IsDoCraft = false;
                 }
             }
 
             [UsedImplicitly]
             static void Postfix(InventoryGui __instance, Player player)
             {
-                Recipe selectedRecipe = null;
                 try
                 {
-                    // Restore saved m_resources (if any)
-                    var selectedRecipeField = typeof(InventoryGui).GetField("m_selectedRecipe", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-                    if (selectedRecipeField != null)
+                    // Restore the original m_resources only for the exact saved recipe we suppressed.
+                    if (_savedRecipeForCall != null && _suppressedThisCall)
                     {
-                        object value = selectedRecipeField.GetValue(__instance);
-                        if (value != null && value.GetType().Name == "RecipeDataPair")
+                        lock (_savedResources)
                         {
-                            var recipeProp = value.GetType().GetProperty("Recipe", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-                            if (recipeProp != null)
-                                selectedRecipe = recipeProp.GetValue(value) as Recipe;
-                        }
-                        else
-                        {
-                            selectedRecipe = value as Recipe;
-                        }
-
-                        if (selectedRecipe != null)
-                        {
-                            lock (_savedResources)
+                            if (_savedResources.TryGetValue(_savedRecipeForCall, out var saved))
                             {
-                                if (_savedResources.TryGetValue(selectedRecipe, out var saved))
+                                var resourcesField = _savedRecipeForCall.GetType().GetField("m_resources", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                                if (resourcesField != null)
                                 {
-                                    var resourcesField = selectedRecipe.GetType().GetField("m_resources", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-                                    if (resourcesField != null)
-                                    {
-                                        resourcesField.SetValue(selectedRecipe, saved);
-                                        UnityEngine.Debug.LogWarning("[ChanceCraft] Restored selectedRecipe.m_resources after DoCrafting.");
-                                    }
-                                    _savedResources.Remove(selectedRecipe);
+                                    resourcesField.SetValue(_savedRecipeForCall, saved);
                                 }
+                                _savedResources.Remove(_savedRecipeForCall);
                             }
                         }
                     }
-                }
-                catch (Exception ex)
-                {
-                    UnityEngine.Debug.LogWarning($"[ChanceCraft] Exception restoring resources in DoCrafting Postfix: {ex}");
-                }
 
-                // If Prefix detected an upgrade for this DoCrafting call, skip ChanceCraft logic.
-                if (_lastDoCraftWasUpgrade)
-                {
-                    _lastDoCraftWasUpgrade = false; // consume flag
+                    // If we didn't suppress for this call, do nothing (the game handled resource removal, or it was an upgrade).
+                    if (!_suppressedThisCall)
+                    {
+                        // clear per-call state and exit
+                        _suppressedThisCall = false;
+                        _savedRecipeForCall = null;
+                        IsDoCraft = false;
+                        return;
+                    }
+
+                    // We suppressed resources in Prefix (for this recipe). Run ChanceCraft logic for the exact recipe.
+                    var recipeForLogic = _savedRecipeForCall;
+                    _suppressedThisCall = false;
+                    _savedRecipeForCall = null;
                     IsDoCraft = false;
-                    UnityEngine.Debug.LogWarning("[ChanceCraft] Detected craft-upgrade in Prefix — skipping ChanceCraft logic for this DoCrafting call.");
-                    return;
-                }
 
-                // Defensive: reset flag in case of unexpected state
-                _lastDoCraftWasUpgrade = false;
-
-                // Clear the IsDoCraft flag so plugin logic can run normally
-                IsDoCraft = false;
-
-                // Now run chance-crafting logic (spawn effects, perform plugin resource removal)
-                try
-                {
-                    Recipe recept = ChanceCraft.TrySpawnCraftEffect(__instance);
+                    // Call TrySpawnCraftEffect and RemoveCraftedItem using the recipe instance we controlled.
+                    Recipe recept = ChanceCraft.TrySpawnCraftEffect(__instance, recipeForLogic);
                     if (player != null && recept != null)
                     {
-                        UnityEngine.Debug.LogWarning("[ChanceCraft] Got crafted item, removing crafted item from inventory via RemoveCraftedItem.");
                         ChanceCraft.RemoveCraftedItem(player, recept);
                     }
                 }
                 catch (Exception ex)
                 {
-                    UnityEngine.Debug.LogWarning($"[ChanceCraft] Exception while running TrySpawnCraftEffect in DoCrafting Postfix: {ex}");
+                    UnityEngine.Debug.LogWarning($"[ChanceCraft] Postfix exception: {ex}");
+                    // reset defensive
+                    _suppressedThisCall = false;
+                    _savedRecipeForCall = null;
+                    IsDoCraft = false;
                 }
             }
         }
@@ -625,46 +655,30 @@ namespace ChanceCraft
                     }
                 }
         */
-        // --- TrySpawnCraftEffect (modified start) ---
-        public static Recipe TrySpawnCraftEffect(InventoryGui gui)
+        // Replace signature and the initial selection logic with this:
+        public static Recipe TrySpawnCraftEffect(InventoryGui gui, Recipe forcedRecipe = null)
         {
-            UnityEngine.Debug.LogWarning("[ChanceCraft] TrySpawnCraftEffect called!");
+            Recipe selectedRecipe = forcedRecipe;
 
-            // If this is an upgrade operation, do not apply ChanceCraft rules
-            var craftUpgradeField = typeof(InventoryGui).GetField("m_craftUpgrade", BindingFlags.Instance | BindingFlags.NonPublic);
-            if (craftUpgradeField != null)
+            if (selectedRecipe == null)
             {
-                object cv = craftUpgradeField.GetValue(gui);
-                if (cv is int upgradeVal && upgradeVal > 1)
+                var selectedRecipeField = typeof(InventoryGui).GetField("m_selectedRecipe", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                if (selectedRecipeField != null)
                 {
-                    UnityEngine.Debug.LogWarning("[ChanceCraft] Craft upgrade detected in TrySpawnCraftEffect — skipping ChanceCraft logic.");
-                    return null;
-                }
-            }
-
-            Recipe selectedRecipe = null;
-
-            var selectedRecipeField = typeof(InventoryGui).GetField("m_selectedRecipe", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-            UnityEngine.Debug.LogWarning($"[ChanceCraft] selectedIndexField = {selectedRecipeField}");
-            if (selectedRecipeField != null)
-            {
-                object value = selectedRecipeField.GetValue(gui);
-                UnityEngine.Debug.LogWarning($"[ChanceCraft] m_selectedRecipe value type: {value?.GetType()} value: {value}");
-                if (value != null && value.GetType().Name == "RecipeDataPair")
-                {
-                    var recipeProp = value.GetType().GetProperty("Recipe", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-                    if (recipeProp != null)
+                    object value = selectedRecipeField.GetValue(gui);
+                    if (value != null && value.GetType().Name == "RecipeDataPair")
                     {
-                        selectedRecipe = recipeProp.GetValue(value) as Recipe;
+                        var recipeProp = value.GetType().GetProperty("Recipe", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                        if (recipeProp != null)
+                            selectedRecipe = recipeProp.GetValue(value) as Recipe;
+                    }
+                    else
+                    {
+                        selectedRecipe = value as Recipe;
                     }
                 }
-                else
-                {
-                    selectedRecipe = value as Recipe;
-                }
             }
 
-            UnityEngine.Debug.LogWarning($"[chancecraft] berore cond selectedRecipe={selectedRecipe} m_localPlayer={Player.m_localPlayer}");
             if (selectedRecipe == null || Player.m_localPlayer == null)
                 return null;
 
