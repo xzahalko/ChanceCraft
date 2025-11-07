@@ -64,9 +64,9 @@ namespace ChanceCraft
 
             UnityEngine.Debug.LogWarning("[ChanceCraft] Awake called!");
 
-            myBossEithkyrStrength.SettingChanged += (sender, args) => {
-                UpdateBossStrength();
-            };
+//            myBossEithkyrStrength.SettingChanged += (sender, args) => {
+//                UpdateBossStrength();
+//            };
 
             try
             {
@@ -210,7 +210,7 @@ namespace ChanceCraft
             return craftedItems;
         }
 
-        public static void RemoveRequiredResources(InventoryGui gui, Player player, Recipe selectedRecipe)
+        public static void RemoveRequiredResources(InventoryGui gui, Player player, Recipe selectedRecipe, Boolean crafted)
         {
             var craftedItemName = selectedRecipe.m_item?.m_itemData?.m_shared?.m_name;
             var craftUpgradeField = typeof(InventoryGui).GetField("m_craftUpgrade", BindingFlags.Instance | BindingFlags.NonPublic);
@@ -241,6 +241,7 @@ namespace ChanceCraft
             }
         }
 
+/*
         public static bool IsChanceCraftRepairable(ItemDrop.ItemData item)
         {
             if (item == null) return false;
@@ -249,7 +250,9 @@ namespace ChanceCraft
             // Fallback to original logic if needed, or return true if you want all other items to be repairable
             return false;
         }
+*/
 
+/*
         [HarmonyPatch(typeof(InventoryGui), "UpdateRepair")]
         public static class InventoryGui_UpdateRepair_Patch
         {
@@ -269,7 +272,7 @@ namespace ChanceCraft
                 }
             }
         }
-
+*/
         public static Recipe TrySpawnCraftEffect(InventoryGui gui)
         {
             UnityEngine.Debug.LogWarning("[ChanceCraft] TrySpawnCraftEffect called!");
@@ -383,9 +386,9 @@ namespace ChanceCraft
                             item.m_variant == craftedVariant)
                         {
                             int toModify = Math.Min(item.m_stack, craftedCount);
-                            item.m_durability = item.GetMaxDurability() * UnityEngine.Random.value;
-                            item.m_customData["ChanceCraft_NoRepair"] = "1";
-                            UnityEngine.Debug.LogWarning($"[ChanceCraft] Set durability of {item.m_shared.m_name} to {item.m_durability}, not repairable");
+//                            item.m_durability = item.GetMaxDurability() * UnityEngine.Random.value;
+//                            item.m_customData["ChanceCraft_NoRepair"] = "1";
+//                            UnityEngine.Debug.LogWarning($"[ChanceCraft] Set durability of {item.m_shared.m_name} to {item.m_durability}, not repairable");
                             craftedCount -= toModify;
                         }
                     }
@@ -393,7 +396,7 @@ namespace ChanceCraft
 //                    player.GetInventory().Changed();
                 }
 
-                //                RemoveRequiredResources(gui, player, selectedRecipe);
+                RemoveRequiredResources(gui, player, selectedRecipe, true);
 
                 UnityEngine.Debug.LogWarning("[chancecraft] removed materials ok ...");
 
@@ -404,7 +407,7 @@ namespace ChanceCraft
                 // Remove all resources
                 UnityEngine.Debug.LogWarning("[chancecraft] failed");
 
-//                RemoveRequiredResources(gui, player, selectedRecipe);
+                RemoveRequiredResources(gui, player, selectedRecipe, false);
 
                 // Show red message
                 player.Message(MessageHud.MessageType.Center, "<color=red>Crafting failed!</color>");
