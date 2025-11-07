@@ -221,6 +221,24 @@ namespace ChanceCraft
                     var resourcesObj = resourcesField.GetValue(selectedRecipe);
                     if (resourcesObj == null) return;
 
+                    // If the recipe has exactly one requirement, DON'T suppress default removal.
+                    // Let the game's DoCrafting remove that single resource (covers failed craft case).
+                    var resourcesEnumerable = resourcesObj as System.Collections.IEnumerable;
+                    if (resourcesEnumerable != null)
+                    {
+                        int count = 0;
+                        foreach (var _ in resourcesEnumerable)
+                        {
+                            count++;
+                            if (count > 1) break;
+                        }
+                        if (count == 1)
+                        {
+                            UnityEngine.Debug.LogWarning("[ChanceCraft] Recipe has single resource - not suppressing default removal so it will be consumed by the game.");
+                            return;
+                        }
+                    }
+
                     lock (_savedResources)
                     {
                         if (!_savedResources.ContainsKey(selectedRecipe))
