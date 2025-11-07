@@ -388,16 +388,120 @@ namespace ChanceCraft
             var resources = resourcesObj as System.Collections.IEnumerable;
             if (resources == null)
             {
-                //UnityEngine.DebugWarning("[ChanceCraft] selectedRecipe.m_resources is null or not enumerable");
+                UnityEngine.Debug.LogWarning("[ChanceCraft] selectedRecipe.m_resources is null or not enumerable");
                 return;
             }
 
             // Build list to iterate multiple times
             var resourceList = resources.Cast<object>().ToList();
 
-            // If only 1 required resource -> always remove it (on success or failure)
+            // Log recipe requirements
+            UnityEngine.Debug.LogWarning($"[ChanceCraft] RemoveRequiredResources called (crafted={crafted}) for recipe {selectedRecipe?.name ?? "<unknown>"} with {resourceList.Count} resource entries.");
+            var reqInfos = new List<(string name, int amount)>();
+            foreach (var req in resourceList)
+            {
+                var nameObj = GetNested(req, "m_resItem", "m_itemData", "m_shared", "m_name");
+                string rname = nameObj as string ?? "<unknown>";
+                int ramount = ToInt(GetMember(req, "m_amount")) * ((ToInt(GetMember(req, "m_amountPerLevel")) > 0 && craftUpgrade > 1) ? craftUpgrade : 1);
+                reqInfos.Add((rname, ramount));
+                UnityEngine.Debug.LogWarning($"[ChanceCraft] Requirement: '{rname}' x{ramount}");
+            }
+
+            // Dump player's inventory for debugging
+            var itemsSnapshot = inventory.GetAllItems();
+            UnityEngine.Debug.LogWarning($"[ChanceCraft] Inventory snapshot: {itemsSnapshot.Count} entries.");
+            for (int i = 0; i < itemsSnapshot.Count; i++)
+            {
+                var it = itemsSnapshot[i];
+                if (it == null || it.m_shared == null) continue;
+                UnityEngine.Debug.LogWarning($"[ChanceCraft][INV] idx={i} name='{it.m_shared.m_name}' quality={it.m_quality} variant={it.m_variant} stack={it.m_stack}");
+            }
+
+            // Helper: remove amount from player's inventory by scanning stacks with matching heuristics.
+            int RemoveAmountFromInventory(string resourceName, int amount)
+            {
+                if (string.IsNullOrEmpty(resourceName) || amount <= 0) return 0;
+
+                int remaining = amount;
+                var items = inventory.GetAllItems();
+
+                // Attempt removal by predicate helper
+                void TryRemove(Func<ItemDrop.ItemData, bool> predicate, string reason)
+                {
+                    if (remaining <= 0) return;
+                    for (int i = items.Count - 1; i >= 0 && remaining > 0; i--)
+                    {
+                        var it = items[i];
+                        if (it == null || it.m_shared == null) continue;
+                        if (!predicate(it)) continue;
+                        int toRemove = Math.Min(it.m_stack, remaining);
+                        it.m_stack -= toRemove;
+                        remaining -= toRemove;
+                        UnityEngine.Debug.LogWarning($"[ChanceCraft] ({reason}) removed {toRemove} from '{it.m_shared.m_name}', new stack {it.m_stack}");
+                        if (it.m_stack <= 0)
+                        {
+                            inventory.RemoveItem(it);
+                            UnityEngine.Debug.LogWarning($"[ChanceCraft] ({reason}) removed item (stack now 0): {it.m_shared.m_name}");
+                        }
+                    }
+                }
+
+                // 1) exact token match
+                TryRemove(it => it.m_shared.m_name == resourceName, "exact token match");
+
+                // 2) exact case-insensitive
+                TryRemove(it => string.Equals(it.m_shared.m_name, resourceName, StringComparison.OrdinalIgnoreCase), "case-insensitive exact");
+
+                // 3) token contains (inventory name contains resource token)
+                TryRemove(it => it.m_shared.m_name != null && resourceName != null &&
+                                 it.m_shared.m_name.IndexOf(resourceName, StringComparison.OrdinalIgnoreCase) >= 0, "inv contains token");
+
+                // 4) token contained in resource name (reverse)
+                TryRemove(it => it.m_shared.m_name != null && resourceName != null &&
+                                 resourceName.IndexOf(it.m_shared.m_name, StringComparison.OrdinalIgnoreCase) >= 0, "token contains inv name");
+
+                // 5) fallback: try RemoveItem API
+                if (remaining > 0)
+                {
+                    try
+                    {
+                        UnityEngine.Debug.LogWarning($"[ChanceCraft] Fallback API remove '{resourceName}' x{remaining}");
+                        inventory.RemoveItem(resourceName, remaining);
+                        // Assume best-effort removal; we can't read exact effect so set remaining = 0
+                        remaining = 0;
+                    }
+                    catch (Exception ex)
+                    {
+                        UnityEngine.Debug.LogWarning($"[ChanceCraft] Fallback RemoveItem failed for '{resourceName}' x{remaining}: {ex}");
+                    }
+                }
+
+                return amount - remaining; // removed count
+            }
+
+            // --- SINGLE-RESOURCE CASE (handle first) ---
+            if (resourceList.Count == 1)
+            {
+                var single = reqInfos[0];
+                string resourceName = single.name;
+                int requiredAmount = single.amount;
+
+                UnityEngine.Debug.LogWarning($"[ChanceCraft] Single-resource recipe - attempting to remove '{resourceName}' x{requiredAmount} (crafted={crafted})");
+
+                int removed = RemoveAmountFromInventory(resourceName, requiredAmount);
+                if (removed <= 0)
+                    UnityEngine.Debug.LogWarning($"[ChanceCraft] Failed to remove any of '{resourceName}' (required {requiredAmount}). Check inventory tokens above.");
+                else if (removed < requiredAmount)
+                    UnityEngine.Debug.LogWarning($"[ChanceCraft] Removed partial amount {removed}/{requiredAmount} of '{resourceName}'.");
+                else
+                    UnityEngine.Debug.LogWarning($"[ChanceCraft] Successfully removed required single resource '{resourceName}' x{requiredAmount}.");
+
+                return;
+            }
+            // --- END SINGLE-RESOURCE CASE ---
+
             // If crafting failed: remove all required resources EXCEPT one random resource.
-            if ( (!crafted) && !(resourceList.Count == 1) )
+            if (!crafted)
             {
                 // Collect valid requirements with name+amount to allow matching (works for struct types)
                 var validReqs = new List<(object req, string name, int amount)>();
@@ -416,6 +520,21 @@ namespace ChanceCraft
                 if (validReqs.Count == 0)
                 {
                     UnityEngine.Debug.LogWarning("[ChanceCraft] No valid requirements to remove on failed craft.");
+                    return;
+                }
+
+                // If there's exactly one valid (positive) requirement, remove it (don't keep it)
+                if (validReqs.Count == 1)
+                {
+                    var only = validReqs[0];
+                    UnityEngine.Debug.LogWarning($"[ChanceCraft] Only one valid requirement on failed craft - removing: {only.name} x{only.amount}");
+                    int removed = RemoveAmountFromInventory(only.name, only.amount);
+                    if (removed <= 0)
+                        UnityEngine.Debug.LogWarning($"[ChanceCraft] Failed to remove {only.name} x{only.amount} on failed craft (removed 0).");
+                    else if (removed < only.amount)
+                        UnityEngine.Debug.LogWarning($"[ChanceCraft] Partial removal {removed}/{only.amount} of {only.name} on failed craft.");
+                    else
+                        UnityEngine.Debug.LogWarning($"[ChanceCraft] Removed {only.name} x{only.amount} on failed craft.");
                     return;
                 }
 
@@ -440,18 +559,16 @@ namespace ChanceCraft
                     if (!skippedKeep && resourceName == keepTuple.name && amount == keepTuple.amount)
                     {
                         skippedKeep = true;
+                        UnityEngine.Debug.LogWarning($"[ChanceCraft] Skipping removal of kept resource: {resourceName} x{amount}");
                         continue;
                     }
 
-                    try
-                    {
-                        UnityEngine.Debug.LogWarning($"[ChanceCraft] removing requirement material (failed craft): {resourceName} x{amount}");
-                        inventory.RemoveItem(resourceName, amount);
-                    }
-                    catch (Exception ex)
-                    {
-                        UnityEngine.Debug.LogWarning($"[ChanceCraft] failed to remove {resourceName} x{amount}: {ex}");
-                    }
+                    UnityEngine.Debug.LogWarning($"[ChanceCraft] Removing (failed craft) requirement material: {resourceName} x{amount}");
+                    int removed = RemoveAmountFromInventory(resourceName, amount);
+                    if (removed <= 0)
+                        UnityEngine.Debug.LogWarning($"[ChanceCraft] Failed to remove {resourceName} x{amount} (removed 0).");
+                    else if (removed < amount)
+                        UnityEngine.Debug.LogWarning($"[ChanceCraft] Partial removal {removed}/{amount} of {resourceName}.");
                 }
 
                 return;
@@ -470,15 +587,12 @@ namespace ChanceCraft
                 int amount = ToInt(GetMember(req, "m_amount")) * ((ToInt(GetMember(req, "m_amountPerLevel")) > 0 && craftUpgrade > 1) ? craftUpgrade : 1);
                 if (amount <= 0) continue;
 
-                try
-                {
-                    UnityEngine.Debug.LogWarning($"[ChanceCraft] removing requirement material: {resourceName} x{amount}");
-                    inventory.RemoveItem(resourceName, amount);
-                }
-                catch (Exception ex)
-                {
-                    UnityEngine.Debug.LogWarning($"[ChanceCraft] failed to remove {resourceName} x{amount}: {ex}");
-                }
+                UnityEngine.Debug.LogWarning($"[ChanceCraft] Removing (success) requirement material: {resourceName} x{amount}");
+                int removed = RemoveAmountFromInventory(resourceName, amount);
+                if (removed <= 0)
+                    UnityEngine.Debug.LogWarning($"[ChanceCraft] Failed to remove {resourceName} x{amount} (removed 0).");
+                else if (removed < amount)
+                    UnityEngine.Debug.LogWarning($"[ChanceCraft] Partial removal {removed}/{amount} of {resourceName}.");
             }
         }
 
