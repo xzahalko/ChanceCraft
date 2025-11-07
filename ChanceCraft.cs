@@ -221,24 +221,9 @@ namespace ChanceCraft
                     var resourcesObj = resourcesField.GetValue(selectedRecipe);
                     if (resourcesObj == null) return;
 
-                    // If the recipe has exactly one requirement, DON'T suppress default removal.
-                    // Let the game's DoCrafting remove that single resource (covers failed craft case).
-                    var resourcesEnumerable = resourcesObj as System.Collections.IEnumerable;
-                    if (resourcesEnumerable != null)
-                    {
-                        int count = 0;
-                        foreach (var _ in resourcesEnumerable)
-                        {
-                            count++;
-                            if (count > 1) break;
-                        }
-                        if (count == 1)
-                        {
-                            UnityEngine.Debug.LogWarning("[ChanceCraft] Recipe has single resource - not suppressing default removal so it will be consumed by the game.");
-                            return;
-                        }
-                    }
-
+                    // NOTE: Do NOT skip suppression for single-resource recipes.
+                    // We suppress default removal for eligible recipes (including single-resource),
+                    // and rely on the plugin's RemoveRequiredResources to remove materials exactly once.
                     lock (_savedResources)
                     {
                         if (!_savedResources.ContainsKey(selectedRecipe))
@@ -403,40 +388,16 @@ namespace ChanceCraft
             var resources = resourcesObj as System.Collections.IEnumerable;
             if (resources == null)
             {
-                UnityEngine.Debug.LogWarning("[ChanceCraft] selectedRecipe.m_resources is null or not enumerable");
+                //UnityEngine.DebugWarning("[ChanceCraft] selectedRecipe.m_resources is null or not enumerable");
                 return;
             }
 
             // Build list to iterate multiple times
             var resourceList = resources.Cast<object>().ToList();
 
-            // If only 1 required resource -> always remove it (as requested)
-            if (resourceList.Count == 1)
-            {
-                var req = resourceList[0];
-                var nameObj = GetNested(req, "m_resItem", "m_itemData", "m_shared", "m_name");
-                string resourceName = nameObj as string;
-                if (!string.IsNullOrEmpty(resourceName))
-                {
-                    int amount = ToInt(GetMember(req, "m_amount")) * ((ToInt(GetMember(req, "m_amountPerLevel")) > 0 && craftUpgrade > 1) ? craftUpgrade : 1);
-                    if (amount > 0)
-                    {
-                        try
-                        {
-//                            UnityEngine.DebugWarning($"[ChanceCraft] Recipe has single requirement - removing: {resourceName} x{amount}");
-                            inventory.RemoveItem(resourceName, amount);
-                        }
-                        catch (Exception ex)
-                        {
-                            UnityEngine.Debug.LogWarning($"[ChanceCraft] failed to remove {resourceName} x{amount}: {ex}");
-                        }
-                    }
-                }
-                return;
-            }
-
+            // If only 1 required resource -> always remove it (on success or failure)
             // If crafting failed: remove all required resources EXCEPT one random resource.
-            if (!crafted)
+            if ( (!crafted) && !(resourceList.Count == 1) )
             {
                 // Collect valid requirements with name+amount to allow matching (works for struct types)
                 var validReqs = new List<(object req, string name, int amount)>();
