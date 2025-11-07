@@ -212,7 +212,11 @@ namespace ChanceCraft
 
         public static void RemoveRequiredResources(InventoryGui gui, Player player, Recipe selectedRecipe, Boolean crafted)
         {
-            var craftedItemName = selectedRecipe.m_item?.m_itemData?.m_shared?.m_name;
+            if (player == null || selectedRecipe == null) return;
+            var inventory = player.GetInventory();
+            if (inventory == null) return;
+
+            // Preserve existing logic to respect craft upgrade multiplier if present
             var craftUpgradeField = typeof(InventoryGui).GetField("m_craftUpgrade", BindingFlags.Instance | BindingFlags.NonPublic);
             int craftUpgrade = 1;
             if (craftUpgradeField != null)
@@ -222,57 +226,61 @@ namespace ChanceCraft
                     craftUpgrade = q;
             }
 
-            // Only remove resources for the first requirement (not all)
-            var req = selectedRecipe.m_resources.FirstOrDefault(r =>
-                r?.m_resItem != null &&
-                !string.IsNullOrEmpty(r.m_resItem.m_itemData?.m_shared?.m_name) &&
-                (string.IsNullOrEmpty(craftedItemName) || r.m_resItem.m_itemData.m_shared.m_name != craftedItemName)
-            );
-
-            if (req != null)
+            // Remove all resource requirements for the selected recipe
+            foreach (var req in selectedRecipe.m_resources)
             {
+                if (req?.m_resItem?.m_itemData?.m_shared == null)
+                    continue;
+
                 string resourceName = req.m_resItem.m_itemData.m_shared.m_name;
                 int amount = req.m_amount * ((req.m_amountPerLevel > 0 && craftUpgrade > 1) ? craftUpgrade : 1);
-                if (amount > 0)
+                if (amount <= 0)
+                    continue;
+
+                try
                 {
-                    UnityEngine.Debug.LogWarning($"[chancecraft] removing ONLY requirement material: {resourceName} x{amount}");
-                    player.GetInventory().RemoveItem(resourceName, amount);
+                    UnityEngine.Debug.LogWarning($"[ChanceCraft] removing requirement material: {resourceName} x{amount}");
+                    inventory.RemoveItem(resourceName, amount);
+                }
+                catch (Exception ex)
+                {
+                    UnityEngine.Debug.LogWarning($"[ChanceCraft] failed to remove {resourceName} x{amount}: {ex}");
                 }
             }
         }
 
-/*
-        public static bool IsChanceCraftRepairable(ItemDrop.ItemData item)
-        {
-            if (item == null) return false;
-//            if (item.m_customData != null && item.m_customData.TryGetValue("ChanceCraft_NoRepair", out var val) && val == "1")
-//                return true;
-            // Fallback to original logic if needed, or return true if you want all other items to be repairable
-            return false;
-        }
-*/
-
-/*
-        [HarmonyPatch(typeof(InventoryGui), "UpdateRepair")]
-        public static class InventoryGui_UpdateRepair_Patch
-        {
-            static void Postfix(InventoryGui __instance)
-            {
-                var player = Player.m_localPlayer;
-                if (player == null) return;
-                var inventory = player.GetInventory();
-                if (inventory == null) return;
-
-                foreach (var item in inventory.GetAllItems())
+        /*
+                public static bool IsChanceCraftRepairable(ItemDrop.ItemData item)
                 {
-                    if (ChanceCraft.IsChanceCraftRepairable(item) )
+                    if (item == null) return false;
+        //            if (item.m_customData != null && item.m_customData.TryGetValue("ChanceCraft_NoRepair", out var val) && val == "1")
+        //                return true;
+                    // Fallback to original logic if needed, or return true if you want all other items to be repairable
+                    return false;
+                }
+        */
+
+        /*
+                [HarmonyPatch(typeof(InventoryGui), "UpdateRepair")]
+                public static class InventoryGui_UpdateRepair_Patch
+                {
+                    static void Postfix(InventoryGui __instance)
                     {
-                        item.m_shared.m_canBeReparied = false;
+                        var player = Player.m_localPlayer;
+                        if (player == null) return;
+                        var inventory = player.GetInventory();
+                        if (inventory == null) return;
+
+                        foreach (var item in inventory.GetAllItems())
+                        {
+                            if (ChanceCraft.IsChanceCraftRepairable(item) )
+                            {
+                                item.m_shared.m_canBeReparied = false;
+                            }
+                        }
                     }
                 }
-            }
-        }
-*/
+        */
         public static Recipe TrySpawnCraftEffect(InventoryGui gui)
         {
             UnityEngine.Debug.LogWarning("[ChanceCraft] TrySpawnCraftEffect called!");
