@@ -226,16 +226,111 @@ namespace ChanceCraft
                     craftUpgrade = q;
             }
 
-            // Remove all resource requirements for the selected recipe
-            foreach (var req in selectedRecipe.m_resources)
+            // Reflection helpers
+            object GetMember(object obj, string name)
             {
-                if (req?.m_resItem?.m_itemData?.m_shared == null)
-                    continue;
+                if (obj == null) return null;
+                var t = obj.GetType();
+                var f = t.GetField(name, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                if (f != null) return f.GetValue(obj);
+                var p = t.GetProperty(name, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                if (p != null) return p.GetValue(obj);
+                return null;
+            }
 
-                string resourceName = req.m_resItem.m_itemData.m_shared.m_name;
-                int amount = req.m_amount * ((req.m_amountPerLevel > 0 && craftUpgrade > 1) ? craftUpgrade : 1);
-                if (amount <= 0)
-                    continue;
+            object GetNested(object obj, params string[] names)
+            {
+                object cur = obj;
+                foreach (var n in names)
+                {
+                    if (cur == null) return null;
+                    cur = GetMember(cur, n);
+                }
+                return cur;
+            }
+
+            int ToInt(object v)
+            {
+                if (v == null) return 0;
+                try { return Convert.ToInt32(v); } catch { return 0; }
+            }
+
+            // Get resources collection
+            var resourcesObj = GetMember(selectedRecipe, "m_resources");
+            var resources = resourcesObj as System.Collections.IEnumerable;
+            if (resources == null)
+            {
+                UnityEngine.Debug.LogWarning("[ChanceCraft] selectedRecipe.m_resources is null or not enumerable");
+                return;
+            }
+
+            // If crafting failed (crafted == false) remove all required resources EXCEPT one random resource.
+            if (!crafted)
+            {
+                var validReqs = new List<object>();
+                foreach (var req in resources)
+                {
+                    var shared = GetNested(req, "m_resItem", "m_itemData", "m_shared");
+                    if (shared == null) continue;
+                    int amount = ToInt(GetMember(req, "m_amount")) * ((ToInt(GetMember(req, "m_amountPerLevel")) > 0 && craftUpgrade > 1) ? craftUpgrade : 1);
+                    if (amount <= 0) continue;
+                    validReqs.Add(req);
+                }
+
+                if (validReqs.Count == 0)
+                {
+                    UnityEngine.Debug.LogWarning("[ChanceCraft] No valid requirements to remove on failed craft.");
+                    return;
+                }
+
+                int keepIndex = UnityEngine.Random.Range(0, validReqs.Count);
+                var keepReq = validReqs[keepIndex];
+                var keepNameObj = GetNested(keepReq, "m_resItem", "m_itemData", "m_shared", "m_name");
+                string keepName = keepNameObj as string ?? "<unknown>";
+
+                UnityEngine.Debug.LogWarning($"[ChanceCraft] Craft failed: keeping one random resource: {keepName}");
+
+                foreach (var req in resources)
+                {
+                    var shared = GetNested(req, "m_resItem", "m_itemData", "m_shared");
+                    if (shared == null) continue;
+
+                    // Skip the chosen requirement to keep
+                    if (object.ReferenceEquals(req, keepReq)) continue;
+
+                    var nameObj = GetNested(req, "m_resItem", "m_itemData", "m_shared", "m_name");
+                    string resourceName = nameObj as string;
+                    if (string.IsNullOrEmpty(resourceName)) continue;
+
+                    int amount = ToInt(GetMember(req, "m_amount")) * ((ToInt(GetMember(req, "m_amountPerLevel")) > 0 && craftUpgrade > 1) ? craftUpgrade : 1);
+                    if (amount <= 0) continue;
+
+                    try
+                    {
+                        UnityEngine.Debug.LogWarning($"[ChanceCraft] removing requirement material (failed craft): {resourceName} x{amount}");
+                        inventory.RemoveItem(resourceName, amount);
+                    }
+                    catch (Exception ex)
+                    {
+                        UnityEngine.Debug.LogWarning($"[ChanceCraft] failed to remove {resourceName} x{amount}: {ex}");
+                    }
+                }
+
+                return;
+            }
+
+            // crafted == true: remove all requirement materials as before
+            foreach (var req in resources)
+            {
+                var shared = GetNested(req, "m_resItem", "m_itemData", "m_shared");
+                if (shared == null) continue;
+
+                var nameObj = GetNested(req, "m_resItem", "m_itemData", "m_shared", "m_name");
+                string resourceName = nameObj as string;
+                if (string.IsNullOrEmpty(resourceName)) continue;
+
+                int amount = ToInt(GetMember(req, "m_amount")) * ((ToInt(GetMember(req, "m_amountPerLevel")) > 0 && craftUpgrade > 1) ? craftUpgrade : 1);
+                if (amount <= 0) continue;
 
                 try
                 {
