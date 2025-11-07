@@ -304,36 +304,24 @@ namespace ChanceCraft
             // --- Only apply plugin custom removal logic for non-eligible item types.
             // If the recipe is eligible for chance-crafting, let the game's default DoCrafting remove the resources.
             var itemType = selectedRecipe.m_item?.m_itemData?.m_shared?.m_itemType;
-            bool isEligible =
-                itemType == ItemDrop.ItemData.ItemType.OneHandedWeapon ||
-                itemType == ItemDrop.ItemData.ItemType.TwoHandedWeapon ||
-                itemType == ItemDrop.ItemData.ItemType.Bow ||
-                itemType == ItemDrop.ItemData.ItemType.TwoHandedWeaponLeft ||
-                itemType == ItemDrop.ItemData.ItemType.Shield ||
-                itemType == ItemDrop.ItemData.ItemType.Helmet ||
-                itemType == ItemDrop.ItemData.ItemType.Chest ||
-                itemType == ItemDrop.ItemData.ItemType.Legs ||
-                itemType == ItemDrop.ItemData.ItemType.Ammo;
 
-            if (isEligible)
-            {
-                // Let the game handle default removal for eligible recipes.
-                UnityEngine.Debug.LogWarning("[ChanceCraft] Eligible recipe - skipping plugin removal and using game's default removal.");
-                return;
-            }
             // ---------------------------------------------------------------
 
             // If crafting failed (crafted == false) remove all required resources EXCEPT one random resource.
             if (!crafted)
             {
-                var validReqs = new List<object>();
+                // Collect valid requirements together with identifying fields (name + amount)
+                var validReqs = new List<(object req, string name, int amount)>();
                 foreach (var req in resourceList)
                 {
                     var shared = GetNested(req, "m_resItem", "m_itemData", "m_shared");
                     if (shared == null) continue;
+                    var nameObj = GetNested(req, "m_resItem", "m_itemData", "m_shared", "m_name");
+                    string resourceName = nameObj as string;
+                    if (string.IsNullOrEmpty(resourceName)) continue;
                     int amount = ToInt(GetMember(req, "m_amount")) * ((ToInt(GetMember(req, "m_amountPerLevel")) > 0 && craftUpgrade > 1) ? craftUpgrade : 1);
                     if (amount <= 0) continue;
-                    validReqs.Add(req);
+                    validReqs.Add((req, resourceName, amount));
                 }
 
                 if (validReqs.Count == 0)
@@ -343,19 +331,15 @@ namespace ChanceCraft
                 }
 
                 int keepIndex = UnityEngine.Random.Range(0, validReqs.Count);
-                var keepReq = validReqs[keepIndex];
-                var keepNameObj = GetNested(keepReq, "m_resItem", "m_itemData", "m_shared", "m_name");
-                string keepName = keepNameObj as string ?? "<unknown>";
+                var keepTuple = validReqs[keepIndex];
+                UnityEngine.Debug.LogWarning($"[ChanceCraft] Craft failed: keeping one random resource: {keepTuple.name} x{keepTuple.amount}");
 
-                UnityEngine.Debug.LogWarning($"[ChanceCraft] Craft failed: keeping one random resource: {keepName}");
-
+                // Remove all other resources. Use value comparison and skip a single matching entry.
+                bool skippedKeep = false;
                 foreach (var req in resourceList)
                 {
                     var shared = GetNested(req, "m_resItem", "m_itemData", "m_shared");
                     if (shared == null) continue;
-
-                    // Skip the chosen requirement to keep
-                    if (object.ReferenceEquals(req, keepReq)) continue;
 
                     var nameObj = GetNested(req, "m_resItem", "m_itemData", "m_shared", "m_name");
                     string resourceName = nameObj as string;
@@ -363,6 +347,13 @@ namespace ChanceCraft
 
                     int amount = ToInt(GetMember(req, "m_amount")) * ((ToInt(GetMember(req, "m_amountPerLevel")) > 0 && craftUpgrade > 1) ? craftUpgrade : 1);
                     if (amount <= 0) continue;
+
+                    // If this entry matches the chosen keep entry (by name and amount) and we haven't skipped yet, skip it.
+                    if (!skippedKeep && resourceName == keepTuple.name && amount == keepTuple.amount)
+                    {
+                        skippedKeep = true;
+                        continue;
+                    }
 
                     try
                     {
