@@ -353,6 +353,26 @@ namespace ChanceCraft
                 return;
             }
 
+            // --- Only apply our custom removal logic to eligible item types ---
+            var itemType = selectedRecipe.m_item?.m_itemData?.m_shared?.m_itemType;
+            bool isEligible =
+                itemType == ItemDrop.ItemData.ItemType.OneHandedWeapon ||
+                itemType == ItemDrop.ItemData.ItemType.TwoHandedWeapon ||
+                itemType == ItemDrop.ItemData.ItemType.Bow ||
+                itemType == ItemDrop.ItemData.ItemType.TwoHandedWeaponLeft ||
+                itemType == ItemDrop.ItemData.ItemType.Shield ||
+                itemType == ItemDrop.ItemData.ItemType.Helmet ||
+                itemType == ItemDrop.ItemData.ItemType.Chest ||
+                itemType == ItemDrop.ItemData.ItemType.Legs ||
+                itemType == ItemDrop.ItemData.ItemType.Ammo;
+
+            if (!isEligible)
+            {
+                UnityEngine.Debug.LogWarning("[ChanceCraft] Recipe item type not eligible for chance-crafting — skipping plugin resource removal.");
+                return;
+            }
+            // ---------------------------------------------------------------
+
             // Preserve existing logic to respect craft upgrade multiplier if present
             var craftUpgradeField = typeof(InventoryGui).GetField("m_craftUpgrade", BindingFlags.Instance | BindingFlags.NonPublic);
             int craftUpgrade = 1;
@@ -401,11 +421,39 @@ namespace ChanceCraft
                 return;
             }
 
+            // Build a list so we can inspect count and iterate multiple times safely
+            var resourceList = resources.Cast<object>().ToList();
+
+            // NEW: If the recipe has exactly one required resource, remove it in all cases (always consume it).
+            if (resourceList.Count == 1)
+            {
+                var req = resourceList[0];
+                var nameObj = GetNested(req, "m_resItem", "m_itemData", "m_shared", "m_name");
+                string resourceName = nameObj as string;
+                if (!string.IsNullOrEmpty(resourceName))
+                {
+                    int amount = ToInt(GetMember(req, "m_amount")) * ((ToInt(GetMember(req, "m_amountPerLevel")) > 0 && craftUpgrade > 1) ? craftUpgrade : 1);
+                    if (amount > 0)
+                    {
+                        try
+                        {
+                            UnityEngine.Debug.LogWarning($"[ChanceCraft] Recipe has single requirement - removing: {resourceName} x{amount}");
+                            inventory.RemoveItem(resourceName, amount);
+                        }
+                        catch (Exception ex)
+                        {
+                            UnityEngine.Debug.LogWarning($"[ChanceCraft] failed to remove {resourceName} x{amount}: {ex}");
+                        }
+                    }
+                }
+                return;
+            }
+
             // If crafting failed (crafted == false) remove all required resources EXCEPT one random resource.
             if (!crafted)
             {
                 var validReqs = new List<object>();
-                foreach (var req in resources)
+                foreach (var req in resourceList)
                 {
                     var shared = GetNested(req, "m_resItem", "m_itemData", "m_shared");
                     if (shared == null) continue;
@@ -427,7 +475,7 @@ namespace ChanceCraft
 
                 UnityEngine.Debug.LogWarning($"[ChanceCraft] Craft failed: keeping one random resource: {keepName}");
 
-                foreach (var req in resources)
+                foreach (var req in resourceList)
                 {
                     var shared = GetNested(req, "m_resItem", "m_itemData", "m_shared");
                     if (shared == null) continue;
@@ -457,7 +505,7 @@ namespace ChanceCraft
             }
 
             // crafted == true: remove all requirement materials as before
-            foreach (var req in resources)
+            foreach (var req in resourceList)
             {
                 var shared = GetNested(req, "m_resItem", "m_itemData", "m_shared");
                 if (shared == null) continue;
