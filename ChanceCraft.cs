@@ -174,11 +174,14 @@ namespace ChanceCraft
             // Keep saved m_resources (original collection) per Recipe instance so we can restore it.
             private static readonly Dictionary<Recipe, object> _savedResources = new Dictionary<Recipe, object>();
 
+            // NOTE: per-call upgrade flag. Set in Prefix and consumed in Postfix to avoid timing/keying issues.
+            private static volatile bool _lastDoCraftWasUpgrade = false;
+
             [UsedImplicitly]
             static void Prefix(InventoryGui __instance)
             {
-                // Always mark that DoCrafting is running so RemoveRequiredResources won't double-remove
                 IsDoCraft = true;
+                _lastDoCraftWasUpgrade = false; // reset at start of call
 
                 try
                 {
@@ -201,20 +204,25 @@ namespace ChanceCraft
 
                     if (selectedRecipe == null) return;
 
-                    // If this is an "upgrade" operation (craft multiplier > 1), do NOT suppress default removal
+                    // Read current craft upgrade value from InventoryGui and set the per-call flag.
                     var craftUpgradeField = typeof(InventoryGui).GetField("m_craftUpgrade", BindingFlags.Instance | BindingFlags.NonPublic);
                     if (craftUpgradeField != null)
                     {
-                        object cv = craftUpgradeField.GetValue(__instance);
-                        if (cv is int upgradeVal && upgradeVal > 1)
+                        try
                         {
-                            // Let the game's DoCrafting handle upgrades normally. We leave m_resources intact.
-                            UnityEngine.Debug.LogWarning("[ChanceCraft] Detected craft upgrade operation — skipping plugin suppression for DoCrafting.");
-                            return;
+                            object cv = craftUpgradeField.GetValue(__instance);
+                            if (cv is int v && v > 1)
+                            {
+                                _lastDoCraftWasUpgrade = true;
+                            }
+                        }
+                        catch
+                        {
+                            // ignore read failure; leave flag false
                         }
                     }
 
-                    // --- Existing eligibility check and suppression logic unchanged below ---
+                    // Only suppress default removal for eligible item types (we want to control these)
                     var itemType = selectedRecipe.m_item?.m_itemData?.m_shared?.m_itemType;
                     bool isEligible =
                         itemType == ItemDrop.ItemData.ItemType.OneHandedWeapon ||
@@ -235,12 +243,14 @@ namespace ChanceCraft
                     var resourcesObj = resourcesField.GetValue(selectedRecipe);
                     if (resourcesObj == null) return;
 
+                    // Save original resources so we can restore in Postfix
                     lock (_savedResources)
                     {
                         if (!_savedResources.ContainsKey(selectedRecipe))
                             _savedResources[selectedRecipe] = resourcesObj;
                     }
 
+                    // Create an empty collection matching the field type so DoCrafting doesn't remove anything.
                     Type fieldType = resourcesField.FieldType;
                     object empty = null;
                     if (fieldType.IsArray)
@@ -267,6 +277,7 @@ namespace ChanceCraft
             [UsedImplicitly]
             static void Postfix(InventoryGui __instance, Player player)
             {
+                Recipe selectedRecipe = null;
                 try
                 {
                     // Restore saved m_resources (if any)
@@ -274,7 +285,6 @@ namespace ChanceCraft
                     if (selectedRecipeField != null)
                     {
                         object value = selectedRecipeField.GetValue(__instance);
-                        Recipe selectedRecipe = null;
                         if (value != null && value.GetType().Name == "RecipeDataPair")
                         {
                             var recipeProp = value.GetType().GetProperty("Recipe", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
@@ -309,27 +319,17 @@ namespace ChanceCraft
                     UnityEngine.Debug.LogWarning($"[ChanceCraft] Exception restoring resources in DoCrafting Postfix: {ex}");
                 }
 
-                // If this DoCrafting was an "upgrade" (craft multiplier > 1), don't run ChanceCraft logic.
-                try
+                // If Prefix detected an upgrade for this DoCrafting call, skip ChanceCraft logic.
+                if (_lastDoCraftWasUpgrade)
                 {
-                    var craftUpgradeField = typeof(InventoryGui).GetField("m_craftUpgrade", BindingFlags.Instance | BindingFlags.NonPublic);
-                    if (craftUpgradeField != null)
-                    {
-                        object cv = craftUpgradeField.GetValue(__instance);
-                        if (cv is int upgradeVal && upgradeVal > 1)
-                        {
-                            // Clear the flag and exit — leave the game's upgrade behavior alone.
-                            IsDoCraft = false;
-                            UnityEngine.Debug.LogWarning("[ChanceCraft] Detected craft upgrade in Postfix — skipping ChanceCraft logic for upgrades.");
-                            return;
-                        }
-                    }
+                    _lastDoCraftWasUpgrade = false; // consume flag
+                    IsDoCraft = false;
+                    UnityEngine.Debug.LogWarning("[ChanceCraft] Detected craft-upgrade in Prefix — skipping ChanceCraft logic for this DoCrafting call.");
+                    return;
                 }
-                catch (Exception ex)
-                {
-                    UnityEngine.Debug.LogWarning($"[ChanceCraft] Exception while checking craft upgrade in Postfix: {ex}");
-                    // continue to run ChanceCraft logic if we can't read the upgrade field
-                }
+
+                // Defensive: reset flag in case of unexpected state
+                _lastDoCraftWasUpgrade = false;
 
                 // Clear the IsDoCraft flag so plugin logic can run normally
                 IsDoCraft = false;
