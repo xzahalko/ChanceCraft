@@ -177,6 +177,7 @@ namespace ChanceCraft
             [UsedImplicitly]
             static void Prefix(InventoryGui __instance)
             {
+                // Always mark that DoCrafting is running so RemoveRequiredResources won't double-remove
                 IsDoCraft = true;
 
                 try
@@ -200,7 +201,20 @@ namespace ChanceCraft
 
                     if (selectedRecipe == null) return;
 
-                    // Only suppress default removal for eligible item types (we want to control these)
+                    // If this is an "upgrade" operation (craft multiplier > 1), do NOT suppress default removal
+                    var craftUpgradeField = typeof(InventoryGui).GetField("m_craftUpgrade", BindingFlags.Instance | BindingFlags.NonPublic);
+                    if (craftUpgradeField != null)
+                    {
+                        object cv = craftUpgradeField.GetValue(__instance);
+                        if (cv is int upgradeVal && upgradeVal > 1)
+                        {
+                            // Let the game's DoCrafting handle upgrades normally. We leave m_resources intact.
+                            UnityEngine.Debug.LogWarning("[ChanceCraft] Detected craft upgrade operation — skipping plugin suppression for DoCrafting.");
+                            return;
+                        }
+                    }
+
+                    // --- Existing eligibility check and suppression logic unchanged below ---
                     var itemType = selectedRecipe.m_item?.m_itemData?.m_shared?.m_itemType;
                     bool isEligible =
                         itemType == ItemDrop.ItemData.ItemType.OneHandedWeapon ||
@@ -221,16 +235,12 @@ namespace ChanceCraft
                     var resourcesObj = resourcesField.GetValue(selectedRecipe);
                     if (resourcesObj == null) return;
 
-                    // NOTE: Do NOT skip suppression for single-resource recipes.
-                    // We suppress default removal for eligible recipes (including single-resource),
-                    // and rely on the plugin's RemoveRequiredResources to remove materials exactly once.
                     lock (_savedResources)
                     {
                         if (!_savedResources.ContainsKey(selectedRecipe))
                             _savedResources[selectedRecipe] = resourcesObj;
                     }
 
-                    // Create an empty collection matching the field type so DoCrafting doesn't remove anything.
                     Type fieldType = resourcesField.FieldType;
                     object empty = null;
                     if (fieldType.IsArray)
@@ -259,7 +269,7 @@ namespace ChanceCraft
             {
                 try
                 {
-                    // Restore saved m_resources
+                    // Restore saved m_resources (if any)
                     var selectedRecipeField = typeof(InventoryGui).GetField("m_selectedRecipe", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
                     if (selectedRecipeField != null)
                     {
@@ -299,7 +309,29 @@ namespace ChanceCraft
                     UnityEngine.Debug.LogWarning($"[ChanceCraft] Exception restoring resources in DoCrafting Postfix: {ex}");
                 }
 
-                // Clear IsDoCraft so plugin logic runs normally
+                // If this DoCrafting was an "upgrade" (craft multiplier > 1), don't run ChanceCraft logic.
+                try
+                {
+                    var craftUpgradeField = typeof(InventoryGui).GetField("m_craftUpgrade", BindingFlags.Instance | BindingFlags.NonPublic);
+                    if (craftUpgradeField != null)
+                    {
+                        object cv = craftUpgradeField.GetValue(__instance);
+                        if (cv is int upgradeVal && upgradeVal > 1)
+                        {
+                            // Clear the flag and exit — leave the game's upgrade behavior alone.
+                            IsDoCraft = false;
+                            UnityEngine.Debug.LogWarning("[ChanceCraft] Detected craft upgrade in Postfix — skipping ChanceCraft logic for upgrades.");
+                            return;
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    UnityEngine.Debug.LogWarning($"[ChanceCraft] Exception while checking craft upgrade in Postfix: {ex}");
+                    // continue to run ChanceCraft logic if we can't read the upgrade field
+                }
+
+                // Clear the IsDoCraft flag so plugin logic can run normally
                 IsDoCraft = false;
 
                 // Now run chance-crafting logic (spawn effects, perform plugin resource removal)
@@ -593,9 +625,22 @@ namespace ChanceCraft
                     }
                 }
         */
+        // --- TrySpawnCraftEffect (modified start) ---
         public static Recipe TrySpawnCraftEffect(InventoryGui gui)
         {
             UnityEngine.Debug.LogWarning("[ChanceCraft] TrySpawnCraftEffect called!");
+
+            // If this is an upgrade operation, do not apply ChanceCraft rules
+            var craftUpgradeField = typeof(InventoryGui).GetField("m_craftUpgrade", BindingFlags.Instance | BindingFlags.NonPublic);
+            if (craftUpgradeField != null)
+            {
+                object cv = craftUpgradeField.GetValue(gui);
+                if (cv is int upgradeVal && upgradeVal > 1)
+                {
+                    UnityEngine.Debug.LogWarning("[ChanceCraft] Craft upgrade detected in TrySpawnCraftEffect — skipping ChanceCraft logic.");
+                    return null;
+                }
+            }
 
             Recipe selectedRecipe = null;
 
