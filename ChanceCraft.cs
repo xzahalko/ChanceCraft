@@ -2303,13 +2303,14 @@ namespace ChanceCraft
 //                        Player.m_localPlayer?.Message(MessageHud.MessageType.Center, "<color=red>Upgrade failed — materials consumed, item preserved.</color>");
 
                         // Option A: simple, uses the helper that finds the panel and schedules refresh
-                        ChanceCraftUIRefreshUsage.RefreshCraftingUiAfterChange();
+
+//                        ChanceCraftUIRefreshUsage.RefreshCraftingUiAfterChange();
 
                         // Option B: direct call if you already have the panel GameObject reference
                         // GameObject craftingPanel = /* your cached panel root or find by name */;
                         // UIRemoteRefresher.Instance.RefreshNextFrame(craftingPanel);
 
-                        Debug.Log("[ChanceCraft] Postfix: scheduled UI refresher after failed upgrade (didRevertAny)");
+//                        Debug.Log("[ChanceCraft] Postfix: scheduled UI refresher after failed upgrade (didRevertAny)");
                     }
                     catch (Exception ex)
                     {
