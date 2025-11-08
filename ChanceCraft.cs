@@ -172,6 +172,10 @@ namespace ChanceCraft
         [HarmonyPatch(typeof(InventoryGui), "DoCrafting")]
         static class InventoryGuiDoCraftingPatch
         {
+            private static int _craftedCountBefore = 0;
+            private static string _craftedNameBefore = null;
+            private static int _craftedQualityBefore = -1;
+            private static int _craftedVariantBefore = -1;
             private static readonly Dictionary<Recipe, object> _savedResources = new Dictionary<Recipe, object>();
 
             // Per-call state (reset at Prefix)
@@ -365,10 +369,19 @@ namespace ChanceCraft
 
                     // Call TrySpawnCraftEffect and RemoveCraftedItem using the recipe instance we controlled.
                     Recipe recept = ChanceCraft.TrySpawnCraftEffect(__instance, recipeForLogic);
-                    if (player != null && recept != null)
-                    {
-                        ChanceCraft.RemoveCraftedItem(player, recept);
-                    }
+//                    if (player != null && recept != null)
+//                    {
+//                        // If this operation looks like an upgrade, do not remove the crafted/upgraded item.
+//                        if (IsUpgradeOperation(__instance, recept))
+//                        {
+//                            UnityEngine.Debug.LogWarning("[ChanceCraft] Detected upgrade attempt — skipping RemoveCraftedItem to avoid deleting upgraded item on failure.");
+//                        }
+//                        else
+//                        {
+//                            UnityEngine.Debug.LogWarning("[ChanceCraft] Got crafted item, removing crafted item from inventory via RemoveCraftedItem.");
+//                            ChanceCraft.RemoveCraftedItem(player, recept);
+//                        }
+//                    }
                 }
                 catch (Exception ex)
                 {
@@ -544,7 +557,7 @@ namespace ChanceCraft
             }
             // If resourceList contains multiple entries but only one valid (positive) requirement,
             // treat it as a single valid requirement on either success or failure.
-            if (!crafted && validReqs.Count == 1)
+            if ( !crafted && validReqs.Count == 1 )
             {
                 var only = validReqs[0];
                 try
@@ -861,5 +874,60 @@ namespace ChanceCraft
         //        return;
         //    }
         //}
+
+        // helper: detect upgrade operation robustly at Postfix time
+        private static bool IsUpgradeOperation(InventoryGui gui, Recipe recipe)
+        {
+            if (recipe == null || gui == null) return false;
+
+            // 1) check InventoryGui.m_craftUpgrade if present
+            try
+            {
+                var craftUpgradeField = typeof(InventoryGui).GetField("m_craftUpgrade", BindingFlags.Instance | BindingFlags.NonPublic);
+                if (craftUpgradeField != null)
+                {
+                    object cv = craftUpgradeField.GetValue(gui);
+                    if (cv is int v && v > 1)
+                    {
+                        return true;
+                    }
+                }
+            }
+            catch
+            {
+                // ignore read error and continue to inventory-based detection
+            }
+
+            // 2) inventory-based detection: if player has a lower-quality item with same name, treat as upgrade
+            try
+            {
+                var craftedName = recipe.m_item?.m_itemData?.m_shared?.m_name;
+                int craftedQuality = recipe.m_item?.m_itemData?.m_quality ?? 0;
+                var localPlayer = Player.m_localPlayer;
+                if (!string.IsNullOrEmpty(craftedName) && craftedQuality > 0 && localPlayer != null)
+                {
+                    var inv = localPlayer.GetInventory();
+                    if (inv != null)
+                    {
+                        foreach (var it in inv.GetAllItems())
+                        {
+                            if (it == null || it.m_shared == null) continue;
+                            if (it.m_shared.m_name == craftedName && it.m_quality < craftedQuality)
+                            {
+                                // Found existing lower-quality item -> likely an upgrade attempt
+                                return true;
+                            }
+                        }
+                    }
+                }
+            }
+            catch
+            {
+                // ignore
+            }
+
+            return false;
+        }
+
     }
 }
