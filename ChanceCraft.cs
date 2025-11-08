@@ -2246,9 +2246,8 @@ namespace ChanceCraft
 
                                     // Option A: simple, uses the helper that finds the panel and schedules refresh
                                     // Example: inside your postfix / TrySpawnCraftEffect failure branch
-                                    int? savedIndex = /* compute saved index from your preCraft snapshot or gui state */;
                                     new ChanceCraftUIRefreshUsage().ShowFailureMessage("Upgrade failed"); // show red HUD
-                                    ChanceCraftUIRefreshUsage.RefreshCraftingUiAfterChange(savedIndex);
+                                    ChanceCraftUIRefreshUsage.RefreshCraftingUiAfterChange();
 
                                     // Option B: direct call if you already have the panel GameObject reference
                                     // GameObject craftingPanel = /* your cached panel root or find by name */;
