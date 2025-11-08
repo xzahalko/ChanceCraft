@@ -9,8 +9,14 @@ namespace ChanceCraft
 {
     public class ChanceCraftUIRefreshUsage
     {
-        // Public entrypoint used elsewhere
+        // Backwards-compatible entrypoint: no saved index (will attempt to preserve by reflection)
         public static void RefreshCraftingUiAfterChange()
+        {
+            RefreshCraftingUiAfterChange(null);
+        }
+
+        // New entrypoint: accepts an explicit saved index from caller (preferred)
+        public static void RefreshCraftingUiAfterChange(int? savedIndex)
         {
             try
             {
@@ -21,18 +27,17 @@ namespace ChanceCraft
                     return;
                 }
 
-                // Preserve selection state before invoking refresh methods
-                int? savedIndex = PreserveUpgradeSelection(igInstance);
+                // If caller didn't provide a savedIndex, try to preserve via reflection
+                int? indexToRestore = savedIndex ?? PreserveUpgradeSelection(igInstance);
 
                 // Invoke safe methods (parameterless or those for which we can build valid args)
                 TryInvokeInventoryGuiUpdateMethods(igInstance);
 
-                // Attempt to restore previous selection after refresh.
-                // Use delayed restore because InventoryGui may rebuild asynchronously.
-                if (savedIndex.HasValue)
+                // If we have an index, schedule a delayed restore with retries
+                if (indexToRestore.HasValue)
                 {
                     // Retry up to 5 times, waiting 1 frame between attempts (tunable)
-                    RestoreSelectionDelayed(igInstance, savedIndex.Value, framesToWait: 1, attempts: 5);
+                    RestoreSelectionDelayed(igInstance, indexToRestore.Value, framesToWait: 1, attempts: 5);
                 }
             }
             catch (Exception ex)
@@ -278,12 +283,11 @@ namespace ChanceCraft
             }
         }
 
-        // Delayed restore: schedule a restore after N frames using a short-lived MonoBehaviour
+        // Delayed restore with retries
         private static void RestoreSelectionDelayed(object igInstance, int index, int framesToWait = 1, int attempts = 5)
         {
             try
             {
-                // Create a GameObject to host the restorer
                 var go = new GameObject("ChanceCraft_SelectionRestorer");
                 UnityEngine.Object.DontDestroyOnLoad(go);
                 var restorer = go.AddComponent<SelectionRestorer>();
@@ -348,13 +352,14 @@ namespace ChanceCraft
                 }
                 finally
                 {
-                    // cleanup
                     Destroy(gameObject);
                 }
             }
         }
 
-        // --- Invocation helpers that try to provide safe args for known methods ---
+        // --- Invocation helpers ---
+
+        // This must be static and accessible from RefreshCraftingUiAfterChange
         private static void TryInvokeInventoryGuiUpdateMethods(object igInstance)
         {
             if (igInstance == null) return;

@@ -2245,7 +2245,10 @@ namespace ChanceCraft
 //                                    try { RefreshInventoryGui(gui); } catch (Exception ex) { UnityEngine.Debug.LogWarning($"[ChanceCraft] TrySpawnCraftEffect: exception while refreshing InventoryGui after revert: {ex}"); }
 
                                     // Option A: simple, uses the helper that finds the panel and schedules refresh
-                                    ChanceCraftUIRefreshUsage.RefreshCraftingUiAfterChange();
+                                    // Example: inside your postfix / TrySpawnCraftEffect failure branch
+                                    int? savedIndex = /* compute saved index from your preCraft snapshot or gui state */;
+                                    new ChanceCraftUIRefreshUsage().ShowFailureMessage("Upgrade failed"); // show red HUD
+                                    ChanceCraftUIRefreshUsage.RefreshCraftingUiAfterChange(savedIndex);
 
                                     // Option B: direct call if you already have the panel GameObject reference
                                     // GameObject craftingPanel = /* your cached panel root or find by name */;
