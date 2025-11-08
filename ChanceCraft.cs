@@ -1352,6 +1352,22 @@ namespace ChanceCraft
                                     _preCraftSnapshot = existing;
                                     _preCraftSnapshotData = existingData;
                                     _snapshotRecipe = selectedRecipe;
+                                    // Populate hash->quality map so the hash-map revert pass can work
+                                    try
+                                    {
+                                        _preCraftSnapshotHashQuality = new Dictionary<int, int>();
+                                        foreach (var it2 in existing)
+                                        {
+                                            if (it2 == null) continue;
+                                            _preCraftSnapshotHashQuality[RuntimeHelpers.GetHashCode(it2)] = it2.m_quality;
+                                        }
+                                        UnityEngine.Debug.LogWarning($"[ChanceCraft] Prefix: populated _preCraftSnapshotHashQuality with {_preCraftSnapshotHashQuality.Count} entries");
+                                    }
+                                    catch (Exception ex)
+                                    {
+                                        UnityEngine.Debug.LogWarning($"[ChanceCraft] Prefix: exception populating pre-craft hash-quality map: {ex}");
+                                        _preCraftSnapshotHashQuality = null;
+                                    }
                                     UnityEngine.Debug.LogWarning($"[ChanceCraft] Prefix: snapshot stored for recipe {RecipeInfo(selectedRecipe)} with {existing.Count} matching items");
                                 }
                             }
@@ -1989,250 +2005,257 @@ namespace ChanceCraft
                     }
                     catch { }
 
-                    // Determine if any pre-snapshot item was already changed in-place
-                    bool gameAlreadyHandled = false;
+                    // NOTE: Run revert attempts unconditionally for upgrade failures.
+                    // This lets us detect and revert newly-created upgraded items even when the "snapshot loop" didn't see an in-place mutation.
                     try
                     {
+                        UnityEngine.Debug.LogWarning("[ChanceCraft] TrySpawnCraftEffect: attempting revert for failed upgrade (unconditional attempt).");
+
+                        bool didRevertAny = false;
                         lock (typeof(ChanceCraftPlugin))
                         {
-                            if (_snapshotRecipe != null && _snapshotRecipe == selectedRecipe && _preCraftSnapshotData != null && _preCraftSnapshotData.Count > 0)
+                            // 1) Snapshot-ref-based revert (authoritative)
+                            if (_preCraftSnapshotData != null)
                             {
+                                var invItems = Player.m_localPlayer?.GetInventory()?.GetAllItems();
+                                var preRefs = _preCraftSnapshot;
                                 foreach (var kv in _preCraftSnapshotData)
                                 {
-                                    var item = kv.Key;
-                                    var pre = kv.Value; // (quality, variant)
-                                    if (item == null || item.m_shared == null) continue;
-                                    int currentQuality = item.m_quality;
-                                    int currentVariant = item.m_variant;
-                                    if (currentQuality > pre.quality && currentVariant == pre.variant)
+                                    var originalRef = kv.Key;
+                                    var pre = kv.Value;
+                                    try
                                     {
-                                        gameAlreadyHandled = true;
-                                        UnityEngine.Debug.LogWarning($"[ChanceCraft] TrySpawnCraftEffect: detected pre-snapshot item upgraded in-place: {ItemInfo(item)} (was q={pre.quality} -> now q={currentQuality})");
-                                        break;
+                                        if (originalRef != null && invItems != null && invItems.Contains(originalRef))
+                                        {
+                                            if (originalRef.m_quality != pre.quality || originalRef.m_variant != pre.variant)
+                                            {
+                                                UnityEngine.Debug.LogWarning($"[ChanceCraft] TrySpawnCraftEffect: reverting original item {ItemInfo(originalRef)} -> q={pre.quality} v={pre.variant}");
+                                                originalRef.m_quality = pre.quality;
+                                                originalRef.m_variant = pre.variant;
+                                                didRevertAny = true;
+                                            }
+                                            continue;
+                                        }
+
+                                        // Replacement detection by heuristics: use pre.quality/pre.variant as authoritative revert targets
+                                        string expectedName = null;
+                                        try { expectedName = originalRef?.m_shared?.m_name ?? selectedRecipe.m_item?.m_itemData?.m_shared?.m_name; } catch { expectedName = null; }
+                                        if (string.IsNullOrEmpty(expectedName) || invItems == null) continue;
+
+                                        foreach (var cur in invItems)
+                                        {
+                                            if (cur == null || cur.m_shared == null) continue;
+                                            if (!string.Equals(cur.m_shared.m_name, expectedName, StringComparison.OrdinalIgnoreCase)) continue;
+                                            if (cur.m_quality <= pre.quality) continue;
+                                            if (preRefs != null && preRefs.Contains(cur)) continue;
+
+                                            UnityEngine.Debug.LogWarning($"[ChanceCraft] TrySpawnCraftEffect: reverting replacement item {ItemInfo(cur)} -> q={pre.quality} v={pre.variant}");
+                                            cur.m_quality = pre.quality;
+                                            cur.m_variant = pre.variant;
+                                            didRevertAny = true;
+                                            break;
+                                        }
+                                    }
+                                    catch (Exception ex)
+                                    {
+                                        UnityEngine.Debug.LogWarning($"[ChanceCraft] TrySpawnCraftEffect: exception while processing pre-snapshot kv for revert: {ex}");
                                     }
                                 }
                             }
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        UnityEngine.Debug.LogWarning($"[ChanceCraft] TrySpawnCraftEffect: exception while checking snapshot for in-place upgrade: {ex}");
-                    }
 
-                    // If the game mutated items to upgraded quality, attempt reversion using multiple strategies
-                    if (gameAlreadyHandled)
-                    {
-                        try
-                        {
-                            UnityEngine.Debug.LogWarning("[ChanceCraft] TrySpawnCraftEffect: attempting revert for failed upgrade.");
-
-                            bool didRevertAny = false;
-                            lock (typeof(ChanceCraftPlugin))
+                            // 2) Conservative fallback by name/quality if snapshot revert didn't find anything
+                            if (!didRevertAny)
                             {
-                                // 1) Snapshot-ref-based revert (existing)
-                                if (_preCraftSnapshotData != null)
+                                try
                                 {
-                                    var invItems = Player.m_localPlayer?.GetInventory()?.GetAllItems();
-                                    var preRefs = _preCraftSnapshot;
-                                    foreach (var kv in _preCraftSnapshotData)
-                                    {
-                                        var originalRef = kv.Key;
-                                        var pre = kv.Value;
-                                        try
-                                        {
-                                            if (originalRef != null && invItems != null && invItems.Contains(originalRef))
-                                            {
-                                                if (originalRef.m_quality != pre.quality || originalRef.m_variant != pre.variant)
-                                                {
-                                                    UnityEngine.Debug.LogWarning($"[ChanceCraft] TrySpawnCraftEffect: reverting original item {ItemInfo(originalRef)} -> q={pre.quality} v={pre.variant}");
-                                                    originalRef.m_quality = pre.quality;
-                                                    originalRef.m_variant = pre.variant;
-                                                    didRevertAny = true;
-                                                }
-                                                continue;
-                                            }
+                                    string resultName = selectedRecipe.m_item?.m_itemData?.m_shared?.m_name;
+                                    int expectedPreQuality = Math.Max(0, (selectedRecipe.m_item?.m_itemData?.m_quality ?? 0) - 1);
 
-                                            // replacement detection by reference equality and heuristics
-                                            string expectedName = null;
-                                            try { expectedName = originalRef?.m_shared?.m_name ?? selectedRecipe.m_item?.m_itemData?.m_shared?.m_name; } catch { expectedName = null; }
-                                            if (string.IsNullOrEmpty(expectedName) || invItems == null) continue;
-
-                                            foreach (var cur in invItems)
-                                            {
-                                                if (cur == null || cur.m_shared == null) continue;
-                                                if (!string.Equals(cur.m_shared.m_name, expectedName, StringComparison.OrdinalIgnoreCase)) continue;
-                                                if (cur.m_variant != pre.variant) continue;
-                                                if (cur.m_quality <= pre.quality) continue;
-                                                if (preRefs != null && preRefs.Contains(cur)) continue;
-
-                                                UnityEngine.Debug.LogWarning($"[ChanceCraft] TrySpawnCraftEffect: reverting replacement item {ItemInfo(cur)} -> q={pre.quality} v={pre.variant}");
-                                                cur.m_quality = pre.quality;
-                                                cur.m_variant = pre.variant;
-                                                didRevertAny = true;
-                                                break;
-                                            }
-                                        }
-                                        catch (Exception ex)
-                                        {
-                                            UnityEngine.Debug.LogWarning($"[ChanceCraft] TrySpawnCraftEffect: exception while processing pre-snapshot kv for revert: {ex}");
-                                        }
-                                    }
-                                }
-
-                                // 2) Conservative fallback by name/quality if snapshot revert didn't find anything
-                                if (!didRevertAny)
-                                {
+                                    // Prefer snapshot pre-quality if available
                                     try
                                     {
-                                        string resultName = selectedRecipe.m_item?.m_itemData?.m_shared?.m_name;
-                                        int finalQuality = selectedRecipe.m_item?.m_itemData?.m_quality ?? 0;
-                                        int expectedPreQuality = Math.Max(0, finalQuality - 1);
-
-                                        if (!string.IsNullOrEmpty(resultName) && Player.m_localPlayer != null)
+                                        if (_preCraftSnapshotData != null && _preCraftSnapshotData.Count > 0)
                                         {
-                                            var invItems2 = Player.m_localPlayer.GetInventory()?.GetAllItems();
-                                            if (invItems2 != null)
-                                            {
-                                                foreach (var it in invItems2)
-                                                {
-                                                    try
-                                                    {
-                                                        if (it == null || it.m_shared == null) continue;
-                                                        if (!string.Equals(it.m_shared.m_name, resultName, StringComparison.OrdinalIgnoreCase)) continue;
-                                                        if (it.m_quality <= expectedPreQuality) continue;
-                                                        if (_preCraftSnapshot != null && _preCraftSnapshot.Contains(it)) continue;
-
-                                                        UnityEngine.Debug.LogWarning($"[ChanceCraft] TrySpawnCraftEffect: fallback revert: changing {ItemInfo(it)} -> q={expectedPreQuality}");
-                                                        it.m_quality = expectedPreQuality;
-                                                        didRevertAny = true;
-                                                    }
-                                                    catch (Exception ex)
-                                                    {
-                                                        UnityEngine.Debug.LogWarning($"[ChanceCraft] TrySpawnCraftEffect: fallback revert exception for item: {ex}");
-                                                    }
-                                                }
-                                            }
+                                            var preQs = _preCraftSnapshotData.Values.Select(v => v.quality).ToList();
+                                            if (preQs.Count > 0) expectedPreQuality = Math.Max(0, preQs.Max());
                                         }
                                     }
-                                    catch (Exception ex)
-                                    {
-                                        UnityEngine.Debug.LogWarning($"[ChanceCraft] TrySpawnCraftEffect: fallback revert exception: {ex}");
-                                    }
-                                }
+                                    catch { /* ignore */ }
 
-                                // 3) Index-based authoritative fallback (if you captured index in Prefix)
-                                if (!didRevertAny && _upgradeTargetItemIndex >= 0)
-                                {
-                                    try
+                                    if (!string.IsNullOrEmpty(resultName) && Player.m_localPlayer != null)
                                     {
-                                        var inv = Player.m_localPlayer?.GetInventory();
-                                        var all = inv?.GetAllItems();
-                                        if (all != null && _upgradeTargetItemIndex >= 0 && _upgradeTargetItemIndex < all.Count)
+                                        var invItems2 = Player.m_localPlayer.GetInventory()?.GetAllItems();
+                                        if (invItems2 != null)
                                         {
-                                            var candidate = all[_upgradeTargetItemIndex];
-                                            if (candidate != null && candidate.m_shared != null)
-                                            {
-                                                string resultName = selectedRecipe.m_item?.m_itemData?.m_shared?.m_name;
-                                                int finalQuality = selectedRecipe.m_item?.m_itemData?.m_quality ?? 0;
-                                                int expectedPreQuality = Math.Max(0, finalQuality - 1);
-
-                                                if (string.Equals(candidate.m_shared.m_name, resultName, StringComparison.OrdinalIgnoreCase) && candidate.m_quality > expectedPreQuality)
-                                                {
-                                                    UnityEngine.Debug.LogWarning($"[ChanceCraft] TrySpawnCraftEffect: index-fallback revert at idx {_upgradeTargetItemIndex}: {ItemInfo(candidate)} -> q={expectedPreQuality}");
-                                                    candidate.m_quality = expectedPreQuality;
-                                                    didRevertAny = true;
-                                                }
-                                                else
-                                                {
-                                                    UnityEngine.Debug.LogWarning($"[ChanceCraft] TrySpawnCraftEffect: index-fallback candidate at idx {_upgradeTargetItemIndex} was not an upgraded match: {ItemInfo(candidate)}");
-                                                }
-                                            }
-                                        }
-                                        else
-                                        {
-                                            UnityEngine.Debug.LogWarning($"[ChanceCraft] TrySpawnCraftEffect: index-fallback index {_upgradeTargetItemIndex} invalid for current inventory count {(all == null ? 0 : all.Count)}");
-                                        }
-                                    }
-                                    catch (Exception ex)
-                                    {
-                                        UnityEngine.Debug.LogWarning($"[ChanceCraft] TrySpawnCraftEffect: index-fallback revert exception: {ex}");
-                                    }
-                                }
-
-                                // 4) HASH-MAP-BASED detection & revert (new robust pass)
-                                if (!didRevertAny && _preCraftSnapshotHashQuality != null && _preCraftSnapshotHashQuality.Count > 0)
-                                {
-                                    try
-                                    {
-                                        string resultName = selectedRecipe.m_item?.m_itemData?.m_shared?.m_name;
-                                        int finalQuality = selectedRecipe.m_item?.m_itemData?.m_quality ?? 0;
-                                        int expectedPreQuality = Math.Max(0, finalQuality - 1);
-
-                                        var invItems3 = Player.m_localPlayer?.GetInventory()?.GetAllItems();
-                                        if (invItems3 != null)
-                                        {
-                                            foreach (var it in invItems3)
+                                            foreach (var it in invItems2)
                                             {
                                                 try
                                                 {
                                                     if (it == null || it.m_shared == null) continue;
-                                                    int h = RuntimeHelpers.GetHashCode(it);
+                                                    if (!string.Equals(it.m_shared.m_name, resultName, StringComparison.OrdinalIgnoreCase)) continue;
+                                                    if (it.m_quality <= expectedPreQuality) continue;
+                                                    if (_preCraftSnapshot != null && _preCraftSnapshot.Contains(it)) continue;
 
-                                                    // If this hash was present before but its quality is now higher: revert it
-                                                    if (_preCraftSnapshotHashQuality.TryGetValue(h, out int prevQ))
+                                                    UnityEngine.Debug.LogWarning($"[ChanceCraft] TrySpawnCraftEffect: fallback revert: changing {ItemInfo(it)} -> q={expectedPreQuality}");
+                                                    it.m_quality = expectedPreQuality;
+                                                    try
                                                     {
-                                                        if (it.m_quality > prevQ)
+                                                        if (_preCraftSnapshotData != null)
                                                         {
-                                                            UnityEngine.Debug.LogWarning($"[ChanceCraft] TrySpawnCraftEffect: hash-map revert: item {ItemInfo(it)} (hash={h:X8}) prevQ={prevQ} -> curQ={it.m_quality}. Reverting to {prevQ}");
-                                                            it.m_quality = prevQ;
-                                                            didRevertAny = true;
-                                                            // continue searching to revert potential duplicates
+                                                            var kv = _preCraftSnapshotData.FirstOrDefault(p => p.Key != null && p.Key.m_shared != null && string.Equals(p.Key.m_shared.m_name, resultName, StringComparison.OrdinalIgnoreCase));
+                                                            if (!kv.Equals(default(KeyValuePair<ItemDrop.ItemData, (int quality, int variant)>)))
+                                                                it.m_variant = kv.Value.variant;
                                                         }
                                                     }
-                                                    else
-                                                    {
-                                                        // Not in pre-snapshot: if name matches and appears upgraded relative to expectedPreQuality, treat as newly-created upgraded instance
-                                                        if (!string.IsNullOrEmpty(resultName) &&
-                                                            string.Equals(it.m_shared.m_name, resultName, StringComparison.OrdinalIgnoreCase) &&
-                                                            it.m_quality > expectedPreQuality)
-                                                        {
-                                                            UnityEngine.Debug.LogWarning($"[ChanceCraft] TrySpawnCraftEffect: hash-map new-instance revert: item {ItemInfo(it)} (hash={h:X8}) appears new+upgraded -> reverting to q={expectedPreQuality}");
-                                                            it.m_quality = expectedPreQuality;
-                                                            didRevertAny = true;
-                                                        }
-                                                    }
+                                                    catch { }
+                                                    didRevertAny = true;
                                                 }
                                                 catch (Exception ex)
                                                 {
-                                                    UnityEngine.Debug.LogWarning($"[ChanceCraft] TrySpawnCraftEffect: hash-map revert exception for item: {ex}");
+                                                    UnityEngine.Debug.LogWarning($"[ChanceCraft] TrySpawnCraftEffect: fallback revert exception for item: {ex}");
                                                 }
                                             }
                                         }
                                     }
-                                    catch (Exception ex)
+                                }
+                                catch (Exception ex)
+                                {
+                                    UnityEngine.Debug.LogWarning($"[ChanceCraft] TrySpawnCraftEffect: fallback revert exception: {ex}");
+                                }
+                            }
+
+                            // 3) Index-based authoritative fallback (if captured)
+                            if (!didRevertAny && _upgradeTargetItemIndex >= 0)
+                            {
+                                try
+                                {
+                                    var inv = Player.m_localPlayer?.GetInventory();
+                                    var all = inv?.GetAllItems();
+                                    if (all != null && _upgradeTargetItemIndex >= 0 && _upgradeTargetItemIndex < all.Count)
                                     {
-                                        UnityEngine.Debug.LogWarning($"[ChanceCraft] TrySpawnCraftEffect: hash-map revert top-level exception: {ex}");
+                                        var candidate = all[_upgradeTargetItemIndex];
+                                        if (candidate != null && candidate.m_shared != null)
+                                        {
+                                            string resultName = selectedRecipe.m_item?.m_itemData?.m_shared?.m_name;
+                                            int finalQuality = selectedRecipe.m_item?.m_itemData?.m_quality ?? 0;
+                                            int expectedPreQuality = Math.Max(0, finalQuality - 1);
+
+                                            try
+                                            {
+                                                if (_preCraftSnapshotData != null)
+                                                {
+                                                    var kv = _preCraftSnapshotData.FirstOrDefault(p => p.Key != null && p.Key.m_shared != null && string.Equals(p.Key.m_shared.m_name, resultName, StringComparison.OrdinalIgnoreCase));
+                                                    if (!kv.Equals(default(KeyValuePair<ItemDrop.ItemData, (int quality, int variant)>)))
+                                                        expectedPreQuality = kv.Value.quality;
+                                                }
+                                            }
+                                            catch { }
+
+                                            if (string.Equals(candidate.m_shared.m_name, resultName, StringComparison.OrdinalIgnoreCase) && candidate.m_quality > expectedPreQuality)
+                                            {
+                                                UnityEngine.Debug.LogWarning($"[ChanceCraft] TrySpawnCraftEffect: index-fallback revert at idx {_upgradeTargetItemIndex}: {ItemInfo(candidate)} -> q={expectedPreQuality}");
+                                                candidate.m_quality = expectedPreQuality;
+                                                didRevertAny = true;
+                                            }
+                                            else
+                                            {
+                                                UnityEngine.Debug.LogWarning($"[ChanceCraft] TrySpawnCraftEffect: index-fallback candidate at idx {_upgradeTargetItemIndex} was not an upgraded match: {ItemInfo(candidate)}");
+                                            }
+                                        }
+                                    }
+                                    else
+                                    {
+                                        UnityEngine.Debug.LogWarning($"[ChanceCraft] TrySpawnCraftEffect: index-fallback index {_upgradeTargetItemIndex} invalid for current inventory count {(all == null ? 0 : all.Count)}");
                                     }
                                 }
-
-                                // If we reverted anything, refresh UI
-                                if (didRevertAny)
+                                catch (Exception ex)
                                 {
-                                    try { RefreshInventoryGui(gui); } catch (Exception ex) { UnityEngine.Debug.LogWarning($"[ChanceCraft] TrySpawnCraftEffect: exception while refreshing InventoryGui after revert: {ex}"); }
+                                    UnityEngine.Debug.LogWarning($"[ChanceCraft] TrySpawnCraftEffect: index-fallback revert exception: {ex}");
                                 }
-
-                                // clear state
-                                _preCraftSnapshot = null;
-                                _preCraftSnapshotData = null;
-                                _snapshotRecipe = null;
-                                _upgradeTargetItemIndex = -1;
-                                _preCraftSnapshotHashQuality = null;
                             }
+
+                            // 4) HASH-MAP-BASED detection & revert
+                            if (!didRevertAny && _preCraftSnapshotHashQuality != null && _preCraftSnapshotHashQuality.Count > 0)
+                            {
+                                try
+                                {
+                                    string resultName = selectedRecipe.m_item?.m_itemData?.m_shared?.m_name;
+                                    int finalQuality = selectedRecipe.m_item?.m_itemData?.m_quality ?? 0;
+                                    int expectedPreQuality = Math.Max(0, finalQuality - 1);
+
+                                    var invItems3 = Player.m_localPlayer?.GetInventory()?.GetAllItems();
+                                    if (invItems3 != null)
+                                    {
+                                        foreach (var it in invItems3)
+                                        {
+                                            try
+                                            {
+                                                if (it == null || it.m_shared == null) continue;
+                                                int h = RuntimeHelpers.GetHashCode(it);
+
+                                                if (_preCraftSnapshotHashQuality.TryGetValue(h, out int prevQ))
+                                                {
+                                                    if (it.m_quality > prevQ)
+                                                    {
+                                                        UnityEngine.Debug.LogWarning($"[ChanceCraft] TrySpawnCraftEffect: hash-map revert: item {ItemInfo(it)} (hash={h:X8}) prevQ={prevQ} -> curQ={it.m_quality}. Reverting to {prevQ}");
+                                                        it.m_quality = prevQ;
+                                                        try
+                                                        {
+                                                            if (_preCraftSnapshotData != null)
+                                                            {
+                                                                var kv = _preCraftSnapshotData.FirstOrDefault(p => RuntimeHelpers.GetHashCode(p.Key) == h);
+                                                                if (!kv.Equals(default(KeyValuePair<ItemDrop.ItemData, (int quality, int variant)>)))
+                                                                    it.m_variant = kv.Value.variant;
+                                                            }
+                                                        }
+                                                        catch { }
+                                                        didRevertAny = true;
+                                                    }
+                                                }
+                                                else
+                                                {
+                                                    if (!string.IsNullOrEmpty(resultName) &&
+                                                        string.Equals(it.m_shared.m_name, resultName, StringComparison.OrdinalIgnoreCase) &&
+                                                        it.m_quality > expectedPreQuality)
+                                                    {
+                                                        UnityEngine.Debug.LogWarning($"[ChanceCraft] TrySpawnCraftEffect: hash-map new-instance revert: item {ItemInfo(it)} (hash={h:X8}) appears new+upgraded -> reverting to q={expectedPreQuality}");
+                                                        it.m_quality = expectedPreQuality;
+                                                        didRevertAny = true;
+                                                    }
+                                                }
+                                            }
+                                            catch (Exception ex)
+                                            {
+                                                UnityEngine.Debug.LogWarning($"[ChanceCraft] TrySpawnCraftEffect: hash-map revert exception for item: {ex}");
+                                            }
+                                        }
+                                    }
+                                }
+                                catch (Exception ex)
+                                {
+                                    UnityEngine.Debug.LogWarning($"[ChanceCraft] TrySpawnCraftEffect: hash-map revert top-level exception: {ex}");
+                                }
+                            }
+
+                            // If we reverted anything, refresh UI
+                            if (didRevertAny)
+                            {
+                                try { RefreshInventoryGui(gui); } catch (Exception ex) { UnityEngine.Debug.LogWarning($"[ChanceCraft] TrySpawnCraftEffect: exception while refreshing InventoryGui after revert: {ex}"); }
+                            }
+
+                            UnityEngine.Debug.LogWarning($"[ChanceCraft] TrySpawnCraftEffect: revert attempts finished, didRevertAny={didRevertAny}");
+
+                            // clear state
+                            _preCraftSnapshot = null;
+                            _preCraftSnapshotData = null;
+                            _snapshotRecipe = null;
+                            _upgradeTargetItemIndex = -1;
+                            _preCraftSnapshotHashQuality = null;
                         }
-                        catch (Exception ex)
-                        {
-                            UnityEngine.Debug.LogWarning($"[ChanceCraft] TrySpawnCraftEffect: exception while reverting in-place upgrade: {ex}");
-                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        UnityEngine.Debug.LogWarning($"[ChanceCraft] TrySpawnCraftEffect: exception while reverting in-place upgrade: {ex}");
                     }
 
                     // Now remove the upgrade resources (preserve target item since we've reverted it)
