@@ -610,7 +610,8 @@ namespace ChanceCraft
                                 var recipeToUse = _upgradeGuiRecipe ?? _upgradeRecipe ?? recipeForLogic;
                                 if (recipeToUse != null)
                                 {
-                                    RemoveRequiredResources(__instance, player, recipeToUse, false, skipRemovingResultResource: true);
+                                    // Use dedicated upgrade removal which preserves the selected upgrade target item and only removes resources on failure.
+                                    RemoveRequiredResourcesUpgrade(__instance, player, recipeToUse, _upgradeTargetItem, false);
                                     UnityEngine.Debug.LogWarning("[ChanceCraft] Postfix: removed resources for failed upgrade using upgrade recipe (preserved upgrade target).");
                                 }
                             }
@@ -839,7 +840,8 @@ namespace ChanceCraft
                     {
                         var recipeToUse = _upgradeGuiRecipe ?? _upgradeRecipe ?? selectedRecipe;
                         UnityEngine.Debug.LogWarning("[ChanceCraft] TrySpawnCraftEffect: detected upgrade on failed craft — removing materials using upgrade recipe and preserving base/upgrading item.");
-                        RemoveRequiredResources(gui, player, recipeToUse, false, skipRemovingResultResource: true);
+                        // Use dedicated upgrade removal which preserves the selected upgrade target item and only removes resources on failure.
+                        RemoveRequiredResourcesUpgrade(gui, player, recipeToUse, _upgradeTargetItem, false);
                         player.Message(MessageHud.MessageType.Center, "<color=red>Upgrade failed — materials consumed, item preserved.</color>");
                     }
                     catch (Exception ex)
@@ -928,6 +930,189 @@ namespace ChanceCraft
             catch { /* ignore */ }
 
             return false;
+        }
+
+        // New helper specifically for upgrade removal.
+        // This method uses the upgrade recipe (passed as selectedRecipe) and will:
+        // - Only remove resources when crafted == false (i.e. on failure).
+        // - Always skip removing any resource that equals the recipe result.
+        // - Never remove the exact inventory item instance specified by upgradeTargetItem.
+        public static void RemoveRequiredResourcesUpgrade(InventoryGui gui, Player player, Recipe selectedRecipe, ItemDrop.ItemData upgradeTargetItem, bool crafted)
+        {
+            if (player == null || selectedRecipe == null) return;
+            var inventory = player.GetInventory();
+            if (inventory == null) return;
+
+            // For upgrade-specific helper we only remove resources on failure; if crafted==true we let the game handle success.
+            if (crafted) return;
+
+            object GetMember(object obj, string name)
+            {
+                if (obj == null) return null;
+                var t = obj.GetType();
+                var f = t.GetField(name, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                if (f != null) return f.GetValue(obj);
+                var p = t.GetProperty(name, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                if (p != null) return p.GetValue(obj);
+                return null;
+            }
+            object GetNested(object obj, params string[] names)
+            {
+                object cur = obj;
+                foreach (var n in names)
+                {
+                    if (cur == null) return null;
+                    cur = GetMember(cur, n);
+                }
+                return cur;
+            }
+            int ToInt(object v)
+            {
+                if (v == null) return 0;
+                try { return Convert.ToInt32(v); } catch { return 0; }
+            }
+
+            // Resolve the recipe result name (used when skipping removal of the result item)
+            string resultName = null;
+            try
+            {
+                resultName = selectedRecipe.m_item?.m_itemData?.m_shared?.m_name;
+            }
+            catch { resultName = null; }
+
+            // Get resources collection
+            var resourcesObj = GetMember(selectedRecipe, "m_resources");
+            var resources = resourcesObj as System.Collections.IEnumerable;
+            if (resources == null)
+            {
+                return;
+            }
+
+            // Build list to iterate multiple times
+            var resourceList = resources.Cast<object>().ToList();
+
+            // Build compact list of (name, amount) for requirements
+            var validReqs = new List<(object req, string name, int amount)>();
+            foreach (var req in resourceList)
+            {
+                var shared = GetNested(req, "m_resItem", "m_itemData", "m_shared");
+                if (shared == null) continue;
+                var nameObj = GetNested(req, "m_resItem", "m_itemData", "m_shared", "m_name");
+                string resourceName = nameObj as string;
+                if (string.IsNullOrEmpty(resourceName)) continue;
+                int amount = ToInt(GetMember(req, "m_amount"));
+                if (amount <= 0) continue;
+                validReqs.Add((req, resourceName, amount));
+            }
+
+            // If all requirements are the result item and we would skip result removal, nothing to do
+            var validReqsFiltered = validReqs.Where(v => !string.Equals(v.name, resultName, StringComparison.OrdinalIgnoreCase)).ToList();
+            if (validReqsFiltered.Count == 0) return;
+
+            // Helper: remove amount from player's inventory by scanning stacks with matching heuristics,
+            // but never remove the exact upgradeTargetItem instance.
+            int RemoveAmountFromInventorySkippingTarget(string resourceName, int amount)
+            {
+                if (string.IsNullOrEmpty(resourceName) || amount <= 0) return 0;
+
+                int remaining = amount;
+                var items = inventory.GetAllItems();
+
+                // Attempt removal by predicate helper that respects the upgradeTargetItem
+                void TryRemove(Func<ItemDrop.ItemData, bool> predicate)
+                {
+                    if (remaining <= 0) return;
+                    for (int i = items.Count - 1; i >= 0 && remaining > 0; i--)
+                    {
+                        var it = items[i];
+                        if (it == null || it.m_shared == null) continue;
+                        // Never remove the exact selected upgrade target instance
+                        if (upgradeTargetItem != null && ReferenceEquals(it, upgradeTargetItem)) continue;
+                        if (!predicate(it)) continue;
+                        int toRemove = Math.Min(it.m_stack, remaining);
+                        it.m_stack -= toRemove;
+                        remaining -= toRemove;
+                        if (it.m_stack <= 0)
+                        {
+                            try { inventory.RemoveItem(it); } catch { /* best-effort */ }
+                        }
+                    }
+                }
+
+                // 1) exact token match
+                TryRemove(it => it.m_shared.m_name == resourceName);
+
+                // 2) exact case-insensitive
+                TryRemove(it => string.Equals(it.m_shared.m_name, resourceName, StringComparison.OrdinalIgnoreCase));
+
+                // 3) token contains (inventory name contains resource token)
+                TryRemove(it => it.m_shared.m_name != null && resourceName != null &&
+                                 it.m_shared.m_name.IndexOf(resourceName, StringComparison.OrdinalIgnoreCase) >= 0);
+
+                // 4) token contained in resource name (reverse)
+                TryRemove(it => it.m_shared.m_name != null && resourceName != null &&
+                                 resourceName.IndexOf(it.m_shared.m_name, StringComparison.OrdinalIgnoreCase) >= 0);
+
+                // 5) fallback: try RemoveItem API (best-effort) - note this may remove the target if the API targets it by name,
+                // but since game API may only remove by name, we already tried instance-safe removal first.
+                if (remaining > 0)
+                {
+                    try
+                    {
+                        inventory.RemoveItem(resourceName, remaining);
+                        remaining = 0;
+                    }
+                    catch
+                    {
+                        // swallow - best-effort
+                    }
+                }
+
+                return amount - remaining; // removed count
+            }
+
+            // --- Failure behavior for upgrades: remove all required resources EXCEPT the recipe result resource (i.e. preserve upgraded item)
+            if (validReqs.Count == 0) return;
+
+            // Choose one resource to keep (keep-one behavior) but ignore result-resource entries when picking
+            int keepIndex = UnityEngine.Random.Range(0, validReqsFiltered.Count);
+            var keepTuple = validReqsFiltered[keepIndex];
+
+            bool skippedKeep = false;
+            foreach (var req in resourceList)
+            {
+                var shared = GetNested(req, "m_resItem", "m_itemData", "m_shared");
+                if (shared == null) continue;
+
+                var nameObj = GetNested(req, "m_resItem", "m_itemData", "m_shared", "m_name");
+                string resourceName = nameObj as string;
+                if (string.IsNullOrEmpty(resourceName)) continue;
+
+                // Always preserve the base/upgrading item resource
+                if (!string.IsNullOrEmpty(resultName) &&
+                    string.Equals(resourceName, resultName, StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                int amount = ToInt(GetMember(req, "m_amount"));
+                if (amount <= 0) continue;
+
+                if (!skippedKeep && resourceName == keepTuple.name && amount == keepTuple.amount)
+                {
+                    skippedKeep = true;
+                    continue;
+                }
+
+                try
+                {
+                    RemoveAmountFromInventorySkippingTarget(resourceName, amount);
+                }
+                catch (Exception ex)
+                {
+                    UnityEngine.Debug.LogWarning($"[ChanceCraft] RemoveRequiredResourcesUpgrade removal failed: {ex}");
+                }
+            }
         }
 
         // RemoveRequiredResources now supports skipping removal of the resource that equals the recipe result (used for failed upgrades).
