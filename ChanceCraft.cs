@@ -2242,7 +2242,7 @@ namespace ChanceCraft
                             {
                                 if (didRevertAny)
                                 {
-                                    try { RefreshInventoryGui(gui); } catch (Exception ex) { UnityEngine.Debug.LogWarning($"[ChanceCraft] TrySpawnCraftEffect: exception while refreshing InventoryGui after revert: {ex}"); }
+//                                    try { RefreshInventoryGui(gui); } catch (Exception ex) { UnityEngine.Debug.LogWarning($"[ChanceCraft] TrySpawnCraftEffect: exception while refreshing InventoryGui after revert: {ex}"); }
 
                                     // Option A: simple, uses the helper that finds the panel and schedules refresh
                                     ChanceCraftUIRefreshUsage.RefreshCraftingUiAfterChange();
@@ -2255,10 +2255,10 @@ namespace ChanceCraft
                                 }
 
                                 // Force left-crafting panel refresh immediately and next frame (covers UI caching/race)
-                                try { RefreshCraftingPanel(gui); } catch (Exception ex) { UnityEngine.Debug.LogWarning($"[ChanceCraft] TrySpawnCraftEffect: RefreshCraftingPanel exception: {ex}"); }
-                                try { gui?.StartCoroutine(DelayedRefreshCraftingPanel(gui, 1)); } catch { /* best-effort */ }
+//                                try { RefreshCraftingPanel(gui); } catch (Exception ex) { UnityEngine.Debug.LogWarning($"[ChanceCraft] TrySpawnCraftEffect: RefreshCraftingPanel exception: {ex}"); }
+//                                try { gui?.StartCoroutine(DelayedRefreshCraftingPanel(gui, 1)); } catch { /* best-effort */ }
 
-                                GameObject panelRoot = null;
+//                                GameObject panelRoot = null;
                             }
                             catch { /* ignore UI refresh errors */ }
 
@@ -2293,14 +2293,14 @@ namespace ChanceCraft
                         RemoveRequiredResourcesUpgrade(gui, Player.m_localPlayer, recipeToUse, upgradeTarget, false);
 
                         // After resources removed, force a left-panel refresh as well (some UI shows "upgraded" until panel updates)
-                        try
-                        {
-                            try { RefreshCraftingPanel(gui); } catch (Exception ex) { UnityEngine.Debug.LogWarning($"[ChanceCraft] TrySpawnCraftEffect: RefreshCraftingPanel(after-Remove) exception: {ex}"); }
-                            try { gui?.StartCoroutine(DelayedRefreshCraftingPanel(gui, 1)); } catch { /* best-effort */ }
-                        }
-                        catch { }
+//                        try
+//                        {
+//                            try { RefreshCraftingPanel(gui); } catch (Exception ex) { UnityEngine.Debug.LogWarning($"[ChanceCraft] TrySpawnCraftEffect: RefreshCraftingPanel(after-Remove) exception: {ex}"); }
+//                            try { gui?.StartCoroutine(DelayedRefreshCraftingPanel(gui, 1)); } catch { /* best-effort */ }
+//                        }
+//                        catch { }
 
-                        Player.m_localPlayer?.Message(MessageHud.MessageType.Center, "<color=red>Upgrade failed — materials consumed, item preserved.</color>");
+//                        Player.m_localPlayer?.Message(MessageHud.MessageType.Center, "<color=red>Upgrade failed — materials consumed, item preserved.</color>");
 
                         // Option A: simple, uses the helper that finds the panel and schedules refresh
                         ChanceCraftUIRefreshUsage.RefreshCraftingUiAfterChange();

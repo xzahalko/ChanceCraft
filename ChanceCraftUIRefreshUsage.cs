@@ -1,6 +1,8 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.Linq;
+using System.Reflection;
 using UnityEngine;
 using UnityEngine.UI;
 using UnityEngine.EventSystems;
@@ -143,6 +145,16 @@ public static class ChanceCraftUIRefreshUsage
                 Debug.LogWarning("[ChanceCraft] DelayedToggleTabs: exception invoking second click: " + ex);
             }
 
+            // After switching back to the upgrade tab, try to restore focus to the previously-selected upgrade item.
+            try
+            {
+                FocusPreviouslySelectedUpgradeItem(panel);
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning("[ChanceCraft] DelayedToggleTabs: FocusPreviouslySelectedUpgradeItem failed: " + ex);
+            }
+
             yield break;
         }
 
@@ -182,12 +194,324 @@ public static class ChanceCraftUIRefreshUsage
                 Debug.LogWarning("[ChanceCraft] DelayedToggleTabs: exception reactivating recipeList: " + ex);
             }
 
+            // Try to focus previously selected upgrade item if possible
+            try
+            {
+                FocusPreviouslySelectedUpgradeItem(panel);
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning("[ChanceCraft] DelayedToggleTabs: FocusPreviouslySelectedUpgradeItem (fallback) failed: " + ex);
+            }
+
             yield break;
         }
 
         // Last-resort synchronous layout rebuild (no yields involved)
         TryImmediateLayoutRebuild(panel);
         yield break;
+    }
+
+    // Try to focus the previously selected item in the InventoryGui upgrade tab.
+    // This uses reflection to read the plugin's saved upgrade target (if present) and set InventoryGui's index/selection.
+    private static void FocusPreviouslySelectedUpgradeItem(GameObject panel)
+    {
+        if (panel == null) return;
+
+        try
+        {
+            // Find InventoryGui instance related to the panel
+            InventoryGui igInstance = null;
+            try { igInstance = panel.GetComponentInChildren<InventoryGui>(true); } catch { igInstance = null; }
+            if (igInstance == null)
+            {
+                try { igInstance = UnityEngine.Object.FindObjectOfType<InventoryGui>(); } catch { igInstance = null; }
+            }
+            if (igInstance == null)
+            {
+                Debug.LogWarning("[ChanceCraft] FocusPreviouslySelectedUpgradeItem: InventoryGui instance not found.");
+                return;
+            }
+
+            // Try to read plugin's stored upgrade target via reflection (ChanceCraftPlugin._upgradeTargetItem or similar)
+            object upgradeTarget = null;
+            int savedIndex = -1;
+
+            // Search loaded assemblies for ChanceCraftPlugin type
+            Type pluginType = null;
+            foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
+            {
+                try
+                {
+                    var t = asm.GetTypes().FirstOrDefault(x => x.Name == "ChanceCraftPlugin" || x.Name == "ChanceCraft");
+                    if (t != null) { pluginType = t; break; }
+                }
+                catch { }
+            }
+
+            if (pluginType != null)
+            {
+                try
+                {
+                    // Try common field names
+                    var fTarget = pluginType.GetField("_upgradeTargetItem", BindingFlags.Static | BindingFlags.NonPublic | BindingFlags.Public)
+                               ?? pluginType.GetField(" _upgradeTargetItem", BindingFlags.Static | BindingFlags.NonPublic | BindingFlags.Public);
+                    if (fTarget != null)
+                    {
+                        upgradeTarget = fTarget.GetValue(null);
+                        Debug.LogWarning("[ChanceCraft] FocusPreviouslySelectedUpgradeItem: read _upgradeTargetItem via reflection: " + (upgradeTarget != null ? upgradeTarget.ToString() : "<null>"));
+                    }
+
+                    var fIndex = pluginType.GetField("_upgradeTargetItemIndex", BindingFlags.Static | BindingFlags.NonPublic | BindingFlags.Public)
+                             ?? pluginType.GetField("_upgradeTargetIndex", BindingFlags.Static | BindingFlags.NonPublic | BindingFlags.Public)
+                             ?? pluginType.GetField("_upgradeItemIndex", BindingFlags.Static | BindingFlags.NonPublic | BindingFlags.Public);
+                    if (fIndex != null)
+                    {
+                        try { savedIndex = Convert.ToInt32(fIndex.GetValue(null)); Debug.LogWarning("[ChanceCraft] FocusPreviouslySelectedUpgradeItem: read saved index " + savedIndex); } catch { savedIndex = -1; }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Debug.LogWarning("[ChanceCraft] FocusPreviouslySelectedUpgradeItem: plugin reflection read failed: " + ex);
+                }
+            }
+            else
+            {
+                Debug.LogWarning("[ChanceCraft] FocusPreviouslySelectedUpgradeItem: plugin type ChanceCraftPlugin not found in loaded assemblies.");
+            }
+
+            Type igType = typeof(InventoryGui);
+
+            // Try to set InventoryGui.m_upgradeItemIndex if available (prefer savedIndex)
+            var fUpgradeItems = igType.GetField("m_upgradeItems", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+            var fUpgradeIndex = igType.GetField("m_upgradeItemIndex", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+                                ?? igType.GetField("m_upgradeIndex", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+
+            if (fUpgradeItems != null && fUpgradeIndex != null)
+            {
+                try
+                {
+                    var listObj = fUpgradeItems.GetValue(igInstance) as System.Collections.IList;
+                    if (listObj != null)
+                    {
+                        int idxToSet = -1;
+
+                        // Prefer savedIndex when valid
+                        if (savedIndex >= 0 && savedIndex < listObj.Count) idxToSet = savedIndex;
+
+                        // Otherwise, try to find by reference to upgradeTarget (if present)
+                        if (idxToSet < 0 && upgradeTarget != null)
+                        {
+                            for (int i = 0; i < listObj.Count; i++)
+                            {
+                                try
+                                {
+                                    var entry = listObj[i];
+                                    if (entry == null) continue;
+                                    if (ReferenceEquals(entry, upgradeTarget)) { idxToSet = i; break; }
+
+                                    // fallback: compare by fields (m_shared.m_name + quality) if direct reference doesn't match
+                                    var eShared = entry.GetType().GetField("m_shared", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)?.GetValue(entry);
+                                    var tShared = upgradeTarget.GetType().GetField("m_shared", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)?.GetValue(upgradeTarget);
+                                    var eName = eShared?.GetType().GetField("m_name", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)?.GetValue(eShared) as string;
+                                    var tName = tShared?.GetType().GetField("m_name", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)?.GetValue(tShared) as string;
+                                    if (!string.IsNullOrEmpty(eName) && !string.IsNullOrEmpty(tName) && string.Equals(eName, tName, StringComparison.OrdinalIgnoreCase))
+                                    {
+                                        idxToSet = i;
+                                        break;
+                                    }
+                                }
+                                catch { }
+                            }
+                        }
+
+                        if (idxToSet >= 0)
+                        {
+                            try
+                            {
+                                fUpgradeIndex.SetValue(igInstance, idxToSet);
+                                Debug.LogWarning("[ChanceCraft] FocusPreviouslySelectedUpgradeItem: set InventoryGui.m_upgradeItemIndex = " + idxToSet);
+                            }
+                            catch (Exception ex)
+                            {
+                                Debug.LogWarning("[ChanceCraft] FocusPreviouslySelectedUpgradeItem: failed to set m_upgradeItemIndex: " + ex);
+                            }
+                        }
+                        else
+                        {
+                            Debug.LogWarning("[ChanceCraft] FocusPreviouslySelectedUpgradeItem: could not resolve index in m_upgradeItems (no match).");
+                        }
+
+                        // Try to call common update methods so the GUI rebinds selection
+                        TryInvokeInventoryGuiUpdateMethods(igInstance);
+
+                        // Try to focus the corresponding UI child to restore visible selection/focus
+                        if (idxToSet >= 0)
+                        {
+                            TrySelectUpgradeUiChild(panel, idxToSet, listObj.Count);
+                        }
+
+                        return;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Debug.LogWarning("[ChanceCraft] FocusPreviouslySelectedUpgradeItem: exception operating on m_upgradeItems: " + ex);
+                }
+            }
+
+            // If we couldn't set index, attempt to find individual UI element for the target and click it
+            if (upgradeTarget != null)
+            {
+                try
+                {
+                    // Search for any child GameObject under panel that has a name matching the item name and click its selectable/button if found
+                    var shared = upgradeTarget.GetType().GetField("m_shared", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)?.GetValue(upgradeTarget);
+                    var tName = shared?.GetType().GetField("m_name", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)?.GetValue(shared) as string;
+                    if (!string.IsNullOrEmpty(tName))
+                    {
+                        var lower = tName.ToLowerInvariant();
+                        foreach (var tr in panel.GetComponentsInChildren<Transform>(true))
+                        {
+                            if (tr == null || string.IsNullOrEmpty(tr.name)) continue;
+                            if (tr.name.ToLowerInvariant().Contains(lower) || (tr.gameObject.GetComponentInChildren<Text>()?.text?.ToLowerInvariant().Contains(lower) ?? false))
+                            {
+                                // attempt to click a Button on this transform
+                                var b = tr.GetComponentInChildren<Button>(true);
+                                if (b != null)
+                                {
+                                    try { InvokeButtonClick(b); Debug.LogWarning("[ChanceCraft] FocusPreviouslySelectedUpgradeItem: clicked candidate UI element: " + tr.name); return; } catch { }
+                                }
+
+                                var sel = tr.GetComponentInChildren<Selectable>(true);
+                                if (sel != null)
+                                {
+                                    try { sel.Select(); EventSystem.current?.SetSelectedGameObject(sel.gameObject); Debug.LogWarning("[ChanceCraft] FocusPreviouslySelectedUpgradeItem: selected candidate UI element: " + tr.name); return; } catch { }
+                                }
+                            }
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Debug.LogWarning("[ChanceCraft] FocusPreviouslySelectedUpgradeItem: fallback UI-element click attempt failed: " + ex);
+                }
+            }
+
+            Debug.LogWarning("[ChanceCraft] FocusPreviouslySelectedUpgradeItem: nothing else to try.");
+        }
+        catch (Exception ex)
+        {
+            Debug.LogWarning("[ChanceCraft] FocusPreviouslySelectedUpgradeItem top-level error: " + ex);
+        }
+    }
+
+    // Try to select the UI child corresponding to the index in the upgrade-items UI list.
+    // Searches for likely candidate containers and tries to select the child at idx.
+    private static void TrySelectUpgradeUiChild(GameObject panel, int idx, int expectedCount)
+    {
+        if (panel == null) return;
+        try
+        {
+            // Heuristics: find transforms with names matching upgrade + list/panel/entries
+            var candidates = new List<Transform>();
+            foreach (var t in panel.GetComponentsInChildren<Transform>(true))
+            {
+                if (t == null || string.IsNullOrEmpty(t.name)) continue;
+                var n = t.name.ToLowerInvariant();
+                if ((n.Contains("upgrade") && (n.Contains("list") || n.Contains("panel") || n.Contains("entries") || n.Contains("items")))
+                    || n.Contains("upgrade_items") || n.Contains("upgradeitem") || n.Contains("upgradecontainer"))
+                {
+                    candidates.Add(t);
+                }
+            }
+
+            // Also include transforms whose child count matches expectedCount (likely the list container)
+            foreach (var t in panel.GetComponentsInChildren<Transform>(true))
+            {
+                try
+                {
+                    if (t.childCount == expectedCount && !candidates.Contains(t))
+                        candidates.Add(t);
+                }
+                catch { }
+            }
+
+            // Try candidates in order
+            foreach (var cand in candidates)
+            {
+                try
+                {
+                    if (cand == null) continue;
+                    int childCount = cand.childCount;
+                    if (childCount == 0) continue;
+                    if (idx >= 0 && idx < childCount)
+                    {
+                        var child = cand.GetChild(idx);
+                        if (child == null) continue;
+
+                        // prefer Button/Selectable on the child
+                        var b = child.GetComponentInChildren<Button>(true);
+                        if (b != null)
+                        {
+                            try { b.Select(); EventSystem.current?.SetSelectedGameObject(b.gameObject); Debug.LogWarning("[ChanceCraft] TrySelectUpgradeUiChild: selected Button on child: " + child.name); return; } catch { }
+                        }
+
+                        var sel = child.GetComponentInChildren<Selectable>(true);
+                        if (sel != null)
+                        {
+                            try { sel.Select(); EventSystem.current?.SetSelectedGameObject(sel.gameObject); Debug.LogWarning("[ChanceCraft] TrySelectUpgradeUiChild: selected Selectable on child: " + child.name); return; } catch { }
+                        }
+
+                        // fallback: set selected gameobject to the child itself
+                        try { EventSystem.current?.SetSelectedGameObject(child.gameObject); Debug.LogWarning("[ChanceCraft] TrySelectUpgradeUiChild: set selected GameObject to child: " + child.name); return; } catch { }
+                    }
+                }
+                catch { /* try next candidate */ }
+            }
+
+            // If none matched, attempt to find any selectable whose label matches index-th item name (best-effort)
+            Debug.LogWarning("[ChanceCraft] TrySelectUpgradeUiChild: no matching UI container found to select child idx=" + idx);
+        }
+        catch (Exception ex)
+        {
+            Debug.LogWarning("[ChanceCraft] TrySelectUpgradeUiChild: exception: " + ex);
+        }
+    }
+
+    // Try to invoke a few candidate InventoryGui instance methods to force rebind/selection visuals
+    private static void TryInvokeInventoryGuiUpdateMethods(InventoryGui igInstance)
+    {
+        if (igInstance == null) return;
+        Type igType = typeof(InventoryGui);
+        var candidates = new[] {
+            "UpdateCraftingPanel", "UpdateRecipeList", "UpdateAvailableRecipes", "UpdateCrafting",
+            "Refresh", "RefreshList", "UpdateAvailableCrafting", "UpdateRecipes", "UpdateInventory",
+            "UpdateSelectedItem", "OnInventoryChanged", "RefreshInventory", "UpdateIcons", "Setup", "OnOpen", "OnShow"
+        };
+
+        foreach (var name in candidates)
+        {
+            try
+            {
+                var m = igType.GetMethod(name, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                if (m != null)
+                {
+                    try
+                    {
+                        m.Invoke(igInstance, null);
+                        Debug.LogWarning("[ChanceCraft] TryInvokeInventoryGuiUpdateMethods: invoked " + name);
+                        // prefer to stop after first successful invoke
+                        return;
+                    }
+                    catch (Exception ex)
+                    {
+                        Debug.LogWarning("[ChanceCraft] TryInvokeInventoryGuiUpdateMethods: method " + name + " invoked but threw: " + ex);
+                    }
+                }
+            }
+            catch { /* keep trying other names */ }
+        }
     }
 
     // Helper: invoke the button as if clicked (invokes onClick and tries ExecuteEvents)
