@@ -33,6 +33,9 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="ChanceCraft.cs" />
+    <Compile Include="ChanceCraftUIPatches_Version7.cs" />
+    <Compile Include="ChanceCraftUIRefresh.cs" />
+    <Compile Include="ChanceCraftUIRefreshUsage.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
   </ItemGroup>
   <ItemGroup>
@@ -71,6 +74,12 @@
     </Reference>
     <Reference Include="UnityEngine.CoreModule">
       <HintPath>C:\Users\Ondra\source\repos\ValheimMod\ValheimMod\Libs\UnityEngine.CoreModule.dll</HintPath>
+    </Reference>
+    <Reference Include="UnityEngine.UI">
+      <HintPath>C:\Users\Ondra\source\repos\ValheimMod\ValheimMod\Libs\UnityEngine.UI.dll</HintPath>
+    </Reference>
+    <Reference Include="UnityEngine.UIModule">
+      <HintPath>C:\Users\Ondra\source\repos\ValheimMod\ValheimMod\Libs\UnityEngine.UIModule.dll</HintPath>
     </Reference>
   </ItemGroup>
   <ItemGroup>

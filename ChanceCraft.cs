@@ -30,6 +30,7 @@ using static HitData;
 using static Room;
 using static UnityEngine.RectTransform;
 using static UnityEngine.Scripting.GarbageCollector;
+using UnityEngine.UI;
 
 namespace ChanceCraft
 {
@@ -2242,11 +2243,22 @@ namespace ChanceCraft
                                 if (didRevertAny)
                                 {
                                     try { RefreshInventoryGui(gui); } catch (Exception ex) { UnityEngine.Debug.LogWarning($"[ChanceCraft] TrySpawnCraftEffect: exception while refreshing InventoryGui after revert: {ex}"); }
+
+                                    // Option A: simple, uses the helper that finds the panel and schedules refresh
+                                    ChanceCraftUIRefreshUsage.RefreshCraftingUiAfterChange();
+
+                                    // Option B: direct call if you already have the panel GameObject reference
+                                    // GameObject craftingPanel = /* your cached panel root or find by name */;
+                                    // UIRemoteRefresher.Instance.RefreshNextFrame(craftingPanel);
+
+                                    Debug.Log("[ChanceCraft] Postfix: scheduled UI refresher after failed upgrade (didRevertAny)");
                                 }
 
                                 // Force left-crafting panel refresh immediately and next frame (covers UI caching/race)
                                 try { RefreshCraftingPanel(gui); } catch (Exception ex) { UnityEngine.Debug.LogWarning($"[ChanceCraft] TrySpawnCraftEffect: RefreshCraftingPanel exception: {ex}"); }
                                 try { gui?.StartCoroutine(DelayedRefreshCraftingPanel(gui, 1)); } catch { /* best-effort */ }
+
+                                GameObject panelRoot = null;
                             }
                             catch { /* ignore UI refresh errors */ }
 
@@ -2289,6 +2301,15 @@ namespace ChanceCraft
                         catch { }
 
                         Player.m_localPlayer?.Message(MessageHud.MessageType.Center, "<color=red>Upgrade failed — materials consumed, item preserved.</color>");
+
+                        // Option A: simple, uses the helper that finds the panel and schedules refresh
+                        ChanceCraftUIRefreshUsage.RefreshCraftingUiAfterChange();
+
+                        // Option B: direct call if you already have the panel GameObject reference
+                        // GameObject craftingPanel = /* your cached panel root or find by name */;
+                        // UIRemoteRefresher.Instance.RefreshNextFrame(craftingPanel);
+
+                        Debug.Log("[ChanceCraft] Postfix: scheduled UI refresher after failed upgrade (didRevertAny)");
                     }
                     catch (Exception ex)
                     {
@@ -3953,6 +3974,8 @@ namespace ChanceCraft
             yield return null;
             try { if (go != null) go.SetActive(true); } catch { }
         }
+
+
 
     }
 }
