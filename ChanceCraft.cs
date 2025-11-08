@@ -557,19 +557,19 @@ namespace ChanceCraft
             }
             // If resourceList contains multiple entries but only one valid (positive) requirement,
             // treat it as a single valid requirement on either success or failure.
-            if ( !crafted && validReqs.Count == 1 )
-            {
-                var only = validReqs[0];
-                try
-                {
-                    RemoveAmountFromInventory(only.name, only.amount);
-                }
-                catch (Exception ex)
-                {
-                    UnityEngine.Debug.LogWarning($"[ChanceCraft] RemoveRequiredResources single valid requirement removal failed: {ex}");
-                }
-                return;
-            }
+//            if ( !crafted )
+//            {
+//                var only = validReqs[0];
+//                try
+//                {
+//                    RemoveAmountFromInventory(only.name, only.amount);
+//                }
+//                catch (Exception ex)
+//                {
+//                    UnityEngine.Debug.LogWarning($"[ChanceCraft] RemoveRequiredResources single valid requirement removal failed: {ex}");
+//                }
+//                return;
+//            }
             // --- END SINGLE-RESOURCE HANDLING ---
 
             // If crafting failed: remove all required resources EXCEPT one random resource.
