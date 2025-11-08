@@ -2502,24 +2502,172 @@ namespace ChanceCraft
 
             // Build validReqs either from GUI list or recipeToUse.m_resources
             var validReqs = new List<(object req, string name, int amount)>();
+
+            // --- NEW: normalize GUI-provided totals into per-level amounts when appropriate ---
             if (haveGuiReqs && guiReqs != null && guiReqs.Count > 0)
             {
+                // Determine levelsToUpgrade similar to Prefix logic: prefer upgradeTargetItem if available
+                int levelsToUpgrade = 1;
+                try
+                {
+                    if (upgradeTargetItem != null)
+                    {
+                        var recipeForQuality = _upgradeGuiRecipe ?? _upgradeRecipe ?? recipeToUse ?? selectedRecipe;
+                        int finalQuality = recipeForQuality?.m_item?.m_itemData?.m_quality ?? 0;
+                        levelsToUpgrade = Math.Max(1, finalQuality - upgradeTargetItem.m_quality);
+                    }
+                    else
+                    {
+                        var craftUpgradeFieldLocal = typeof(InventoryGui).GetField("m_craftUpgrade", BindingFlags.Instance | BindingFlags.NonPublic);
+                        if (craftUpgradeFieldLocal != null)
+                        {
+                            try
+                            {
+                                var cvObj = craftUpgradeFieldLocal.GetValue(gui);
+                                if (cvObj is int cv && cv > 0)
+                                {
+                                    int selQuality = selectedRecipe?.m_item?.m_itemData?.m_quality ?? 0;
+                                    if (selQuality > 0 && cv > selQuality)
+                                        levelsToUpgrade = Math.Max(1, cv - selQuality);
+                                    else
+                                        levelsToUpgrade = Math.Max(1, cv);
+                                }
+                            }
+                            catch { levelsToUpgrade = 1; }
+                        }
+                    }
+                }
+                catch { levelsToUpgrade = 1; }
+
+                // Try to use DB candidate as a hint for per-level amounts (prefer m_amountPerLevel, prefer next-quality recipe)
+                Recipe dbCandidate = null;
+                try
+                {
+                    if (upgradeTargetItem != null && ObjectDB.instance != null)
+                    {
+                        // Look specifically for the recipe that produces the next quality (preferred)
+                        string desiredResultName = selectedRecipe.m_item?.m_itemData?.m_shared?.m_name;
+                        int desiredQuality = upgradeTargetItem.m_quality + 1;
+                        foreach (var r in ObjectDB.instance.m_recipes)
+                        {
+                            try
+                            {
+                                if (r == null || r.m_item == null) continue;
+                                var rn = r.m_item.m_itemData?.m_shared?.m_name;
+                                if (!string.Equals(rn, desiredResultName, StringComparison.OrdinalIgnoreCase)) continue;
+                                int q = r.m_item.m_itemData?.m_quality ?? 0;
+                                if (q == desiredQuality)
+                                {
+                                    dbCandidate = r;
+                                    UnityEngine.Debug.LogWarning($"[ChanceCraft] RemoveRequiredResourcesUpgrade: selected DB candidate by exact quality match (next-level) -> {RecipeInfo(r)}");
+                                    break;
+                                }
+                            }
+                            catch { }
+                        }
+                    }
+
+                    // Fallback to best candidate if we didn't find exact next-level
+                    if (dbCandidate == null)
+                    {
+                        try { dbCandidate = FindBestUpgradeRecipeCandidate(selectedRecipe); } catch { dbCandidate = null; }
+                    }
+                }
+                catch { dbCandidate = null; }
+
                 foreach (var g in guiReqs)
                 {
-                    validReqs.Add((null, g.name, g.amount));
-                    UnityEngine.Debug.LogWarning($"[ChanceCraft] RemoveRequiredResourcesUpgrade: GUI req '{g.name}' amount={g.amount}");
+                    int guiAmt = g.amount;
+                    int perLevel = guiAmt;
+
+                    // If GUI total is divisible by detected levels, normalize quickly
+                    if (levelsToUpgrade > 1 && guiAmt > 0 && (guiAmt % levelsToUpgrade) == 0)
+                    {
+                        perLevel = guiAmt / levelsToUpgrade;
+                        UnityEngine.Debug.LogWarning($"[ChanceCraft] RemoveRequiredResourcesUpgrade: normalized GUI req {g.name}:{guiAmt} by levelsToUpgrade={levelsToUpgrade} -> {perLevel}");
+                    }
+                    else if (dbCandidate != null && guiAmt > 0)
+                    {
+                        // Prefer m_amountPerLevel from DB candidate (if present), otherwise try m_amount
+                        try
+                        {
+                            var resourcesField2 = dbCandidate.GetType().GetField("m_resources", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                            var candidateResources = resourcesField2?.GetValue(dbCandidate) as System.Collections.IEnumerable;
+                            if (candidateResources != null)
+                            {
+                                foreach (var req in candidateResources)
+                                {
+                                    try
+                                    {
+                                        var et = req.GetType();
+                                        var nameObj = et.GetField("m_resItem", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)?.GetValue(req);
+                                        string resName = null;
+                                        if (nameObj != null)
+                                        {
+                                            var itemData = nameObj.GetType().GetField("m_itemData", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)?.GetValue(nameObj);
+                                            var shared = itemData?.GetType().GetField("m_shared", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)?.GetValue(itemData);
+                                            resName = shared?.GetType().GetField("m_name", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)?.GetValue(shared) as string;
+                                        }
+                                        if (string.IsNullOrEmpty(resName)) continue;
+                                        if (!string.Equals(resName, g.name, StringComparison.OrdinalIgnoreCase)) continue;
+
+                                        // Read per-level first
+                                        int dbPerLevel = 0;
+                                        var perLevelObj = et.GetField("m_amountPerLevel", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)?.GetValue(req);
+                                        if (perLevelObj != null) { try { dbPerLevel = Convert.ToInt32(perLevelObj); } catch { dbPerLevel = 0; } }
+
+                                        if (dbPerLevel > 0)
+                                        {
+                                            // Use the DB per-level amount (most authoritative for upgrades)
+                                            perLevel = dbPerLevel;
+                                            UnityEngine.Debug.LogWarning($"[ChanceCraft] RemoveRequiredResourcesUpgrade: using DB m_amountPerLevel={dbPerLevel} for {g.name}");
+                                        }
+                                        else
+                                        {
+                                            // Fallback to DB m_amount (per-recipe total)
+                                            int dbAmount = 0;
+                                            var amountObj2 = et.GetField("m_amount", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)?.GetValue(req);
+                                            if (amountObj2 != null) { try { dbAmount = Convert.ToInt32(amountObj2); } catch { dbAmount = 0; } }
+                                            // If dbAmount divides GUI total, infer per-level as dbAmount/levelsToUpgrade when sensible
+                                            if (dbAmount > 0)
+                                            {
+                                                if (levelsToUpgrade > 1 && (dbAmount % levelsToUpgrade) == 0)
+                                                {
+                                                    perLevel = dbAmount / levelsToUpgrade;
+                                                    UnityEngine.Debug.LogWarning($"[ChanceCraft] RemoveRequiredResourcesUpgrade: inferred per-level from DB m_amount {dbAmount} / levels {levelsToUpgrade} -> {perLevel} for {g.name}");
+                                                }
+                                                else if (dbAmount < guiAmt)
+                                                {
+                                                    // If DB reports a smaller total than GUI and doesn't divide cleanly, prefer dbAmount (likely more authoritative)
+                                                    perLevel = dbAmount;
+                                                    UnityEngine.Debug.LogWarning($"[ChanceCraft] RemoveRequiredResourcesUpgrade: using DB m_amount={dbAmount} for {g.name} (fallback)");
+                                                }
+                                            }
+                                        }
+
+                                        break;
+                                    }
+                                    catch { /* ignore per-req */ }
+                                }
+                            }
+                        }
+                        catch { /* ignore DB parse errors */ }
+                    }
+
+                    validReqs.Add((null, g.name, perLevel));
+                    UnityEngine.Debug.LogWarning($"[ChanceCraft] RemoveRequiredResourcesUpgrade: GUI req '{g.name}' normalized amount={perLevel} (guiTotal={guiAmt})");
                 }
             }
             else
             {
-                // Read recipeToUse.m_resources
+                // Read recipeToUse.m_resources (existing logic, but uses per-level only when we detect an upgrade context)
                 try
                 {
                     var resourcesObj2 = GetMember(recipeToUse, "m_resources");
                     var resources2 = resourcesObj2 as System.Collections.IEnumerable;
                     if (resources2 != null)
                     {
-                        // preserve craftUpgrade multiplier if present
+                        // preserve craftUpgrade multiplier if present (used only as fallback to infer levels)
                         var craftUpgradeField2 = typeof(InventoryGui).GetField("m_craftUpgrade", BindingFlags.Instance | BindingFlags.NonPublic);
                         int craftUpgrade2 = 1;
                         if (craftUpgradeField2 != null)
@@ -2551,8 +2699,33 @@ namespace ChanceCraft
                                 int amount;
                                 if (isUpgradeNow && perLevel > 0)
                                 {
-                                    amount = perLevel * (craftUpgrade2 > 1 ? craftUpgrade2 : 1);
-                                    UnityEngine.Debug.LogWarning($"[ChanceCraft] RemoveRequiredResourcesUpgrade: using per-level amount for '{resourceName}' -> perLevel={perLevel} craftUpgrade={craftUpgrade2} amount={amount}");
+                                    int levelsToUpgrade = 1;
+                                    try
+                                    {
+                                        if (upgradeTargetItem != null)
+                                        {
+                                            int finalQuality = recipeToUse.m_item?.m_itemData?.m_quality ?? selectedRecipe.m_item?.m_itemData?.m_quality ?? 0;
+                                            levelsToUpgrade = Math.Max(1, finalQuality - upgradeTargetItem.m_quality);
+                                        }
+                                        else
+                                        {
+                                            if (craftUpgrade2 > 1)
+                                            {
+                                                int selQuality = selectedRecipe?.m_item?.m_itemData?.m_quality ?? 0;
+                                                if (selQuality > 0 && craftUpgrade2 > selQuality)
+                                                    levelsToUpgrade = Math.Max(1, craftUpgrade2 - selQuality);
+                                                else
+                                                    levelsToUpgrade = Math.Max(1, craftUpgrade2);
+                                            }
+                                        }
+                                    }
+                                    catch
+                                    {
+                                        levelsToUpgrade = 1;
+                                    }
+
+                                    amount = perLevel * levelsToUpgrade;
+                                    UnityEngine.Debug.LogWarning($"[ChanceCraft] RemoveRequiredResourcesUpgrade: using per-level amount for '{resourceName}' -> perLevel={perLevel} levelsToUpgrade={levelsToUpgrade} final={amount}");
                                 }
                                 else
                                 {
@@ -2729,6 +2902,8 @@ namespace ChanceCraft
                             }
 
                             // Prefer base m_amount first (total). Use m_amountPerLevel only as fallback.
+                            // But if both are present and m_amount is an exact multiple of m_amountPerLevel (and perLevel < amount),
+                            // prefer m_amountPerLevel since GUI often reports totals for multi-level upgrades.
                             int amount = 0;
                             object amountObj = null;
                             object amountPerLevelObj = null;
@@ -2743,22 +2918,47 @@ namespace ChanceCraft
                             if (fAmountPerLevel != null) amountPerLevelObj = fAmountPerLevel.GetValue(elem);
                             else if (pAmountPerLevel != null) amountPerLevelObj = pAmountPerLevel.GetValue(elem);
 
+                            int parsedAmount = 0;
+                            int parsedPerLevel = 0;
                             if (amountObj != null)
                             {
-                                try { amount = Convert.ToInt32(amountObj); } catch { amount = 0; }
-                                if (amount > 0)
+                                try { parsedAmount = Convert.ToInt32(amountObj); } catch { parsedAmount = 0; }
+                                if (parsedAmount > 0)
                                 {
-                                    UnityEngine.Debug.LogWarning($"[ChanceCraft] TryGetRequirementsFromGui: using m_amount for resource '{resName}' -> {amount}");
+                                    UnityEngine.Debug.LogWarning($"[ChanceCraft] TryGetRequirementsFromGui: found m_amount for resource '{resName}' -> {parsedAmount}");
                                 }
                             }
 
-                            if (amount == 0 && amountPerLevelObj != null)
+                            if (amountPerLevelObj != null)
                             {
-                                try { amount = Convert.ToInt32(amountPerLevelObj); } catch { amount = 0; }
-                                if (amount > 0)
+                                try { parsedPerLevel = Convert.ToInt32(amountPerLevelObj); } catch { parsedPerLevel = 0; }
+                                if (parsedPerLevel > 0)
                                 {
-                                    UnityEngine.Debug.LogWarning($"[ChanceCraft] TryGetRequirementsFromGui: using m_amountPerLevel (fallback) for resource '{resName}' -> {amount}");
+                                    UnityEngine.Debug.LogWarning($"[ChanceCraft] TryGetRequirementsFromGui: found m_amountPerLevel for resource '{resName}' -> {parsedPerLevel}");
                                 }
+                            }
+
+                            // Heuristic: if both exist and total is a clean multiple of per-level, prefer per-level.
+                            if (parsedPerLevel > 0 && parsedAmount > 0 && (parsedAmount % parsedPerLevel) == 0 && parsedPerLevel < parsedAmount)
+                            {
+                                amount = parsedPerLevel;
+                                UnityEngine.Debug.LogWarning($"[ChanceCraft] TryGetRequirementsFromGui: preferring m_amountPerLevel over m_amount (parsedAmount={parsedAmount}, perLevel={parsedPerLevel}) for '{resName}'");
+                            }
+                            else if (parsedPerLevel > 0 && parsedAmount == 0)
+                            {
+                                // No total present, but per-level present: use per-level
+                                amount = parsedPerLevel;
+                                UnityEngine.Debug.LogWarning($"[ChanceCraft] TryGetRequirementsFromGui: using m_amountPerLevel (no m_amount) for '{resName}' -> {amount}");
+                            }
+                            else if (parsedAmount > 0)
+                            {
+                                // Default: use the total amount when we cannot reliably infer per-level
+                                amount = parsedAmount;
+                                UnityEngine.Debug.LogWarning($"[ChanceCraft] TryGetRequirementsFromGui: using m_amount for resource '{resName}' -> {amount}");
+                            }
+                            else
+                            {
+                                amount = 0;
                             }
 
                             if (!string.IsNullOrEmpty(resName) && amount > 0)
