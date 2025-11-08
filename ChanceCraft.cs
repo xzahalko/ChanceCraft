@@ -33,6 +33,11 @@ namespace ChanceCraft
         // NEW: store pre-craft qualities so we can reliably detect in-place upgrades
         private static Dictionary<ItemDrop.ItemData, (int quality, int variant)> _preCraftSnapshotData = null;
 
+        // Track suppressed logical recipes across GUI reopenings by a fingerprint
+        private static HashSet<string> _suppressedRecipeKeys = new HashSet<string>();
+        // Lock to protect access to _suppressedRecipeKeys
+        private static readonly object _suppressedRecipeKeysLock = new object();
+
         private static ItemDrop.ItemData _upgradeTargetItem = null;   // exact inventory item being upgraded (if detected)
         private static Recipe _upgradeRecipe = null;
         private static Recipe _upgradeGuiRecipe = null;
@@ -118,6 +123,40 @@ namespace ChanceCraft
             {
                 return "<bad recipe>";
             }
+        }
+
+        // Create a compact fingerprint for a recipe that is stable across different Recipe instances
+        private static string RecipeFingerprint(Recipe r)
+        {
+            if (r == null || r.m_item == null) return "<null>";
+            try
+            {
+                var name = r.m_item.m_itemData?.m_shared?.m_name ?? "<no-result>";
+                var amount = r.m_amount;
+                var resourcesField = r.GetType().GetField("m_resources", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                var resObj = resourcesField?.GetValue(r) as System.Collections.IEnumerable;
+                var parts = new List<string>();
+                if (resObj != null)
+                {
+                    foreach (var req in resObj)
+                    {
+                        try
+                        {
+                            var t = req.GetType();
+                            var amountObj = t.GetField("m_amount", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)?.GetValue(req);
+                            int reqAmount = amountObj != null ? Convert.ToInt32(amountObj) : 0;
+                            var resItem = t.GetField("m_resItem", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)?.GetValue(req);
+                            var itemData = resItem?.GetType().GetField("m_itemData", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)?.GetValue(resItem);
+                            var shared = itemData?.GetType().GetField("m_shared", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)?.GetValue(itemData);
+                            var rname = shared?.GetType().GetField("m_name", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)?.GetValue(shared) as string;
+                            parts.Add($"{rname ?? "<unknown>"}:{reqAmount}");
+                        }
+                        catch { parts.Add("<res-err>"); }
+                    }
+                }
+                return $"{name}|{amount}|{string.Join(",", parts)}";
+            }
+            catch { return "<fingerprint-err>"; }
         }
 
         // Helper: detect when a recipe consumes the same item it creates (common for upgrades)
@@ -594,12 +633,29 @@ namespace ChanceCraft
                         return;
                     }
 
+                    // Save original resources collection for later restore (keyed by Recipe instance)
                     lock (_savedResources)
                     {
                         if (!_savedResources.ContainsKey(selectedRecipe))
                             _savedResources[selectedRecipe] = resourcesObj;
                     }
 
+                    // IMPORTANT: compute and record fingerprint BEFORE we modify the recipe's m_resources
+                    try
+                    {
+                        var key = RecipeFingerprint(selectedRecipe);
+                        lock (_suppressedRecipeKeysLock)
+                        {
+                            _suppressedRecipeKeys.Add(key);
+                        }
+                        UnityEngine.Debug.LogWarning($"[ChanceCraft] Prefix: recorded suppressed recipe fingerprint: {key}");
+                    }
+                    catch (Exception ex)
+                    {
+                        UnityEngine.Debug.LogWarning($"[ChanceCraft] Prefix: exception recording suppressed fingerprint: {ex}");
+                    }
+
+                    // Now suppress the resources collection on the live recipe instance so the game won't consume them.
                     Type fieldType = resourcesField.FieldType;
                     object empty = null;
                     if (fieldType.IsArray) empty = Array.CreateInstance(fieldType.GetElementType(), 0);
@@ -697,7 +753,18 @@ namespace ChanceCraft
                                 UnityEngine.Debug.LogWarning($"[ChanceCraft] Postfix: Exception while removing resources for upgrade: {ex}");
                             }
 
-                            // cleanup snapshot and upgrade state
+                            // cleanup fingerprint, snapshot and upgrade state
+                            try
+                            {
+                                if (recipeForLogic != null)
+                                {
+                                    var key = RecipeFingerprint(recipeForLogic);
+                                    lock (_suppressedRecipeKeysLock) { _suppressedRecipeKeys.Remove(key); }
+                                    UnityEngine.Debug.LogWarning($"[ChanceCraft] Postfix: removed suppressed fingerprint {key}");
+                                }
+                            }
+                            catch { }
+
                             lock (typeof(ChanceCraft))
                             {
                                 _preCraftSnapshot = null;
@@ -933,6 +1000,24 @@ namespace ChanceCraft
                     // Determine whether this operation was suppressed earlier.
                     bool suppressedThisOperation = IsDoCraft;
 
+                    // fingerprint-based check (recognizes suppression even if the recipe instance changed)
+                    try
+                    {
+                        var key = RecipeFingerprint(selectedRecipe);
+                        lock (_suppressedRecipeKeysLock)
+                        {
+                            if (_suppressedRecipeKeys.Contains(key))
+                            {
+                                suppressedThisOperation = true;
+                                UnityEngine.Debug.LogWarning($"[ChanceCraft] TrySpawnCraftEffect: detected suppressed recipe fingerprint {key} -> treating as suppressed");
+                            }
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        UnityEngine.Debug.LogWarning($"[ChanceCraft] TrySpawnCraftEffect: exception checking suppressed fingerprint: {ex}");
+                    }
+
                     // Also treat the presence of a matching pre-craft snapshot as evidence we suppressed earlier.
                     try
                     {
@@ -959,7 +1044,15 @@ namespace ChanceCraft
                             // Remove upgrade resources for successful upgrade (plugin-managed because we suppressed)
                             RemoveRequiredResourcesUpgrade(gui, player, recipeToUse, _upgradeTargetItem, true);
 
-                            // clear snapshot state - we preserved/handled upgrade
+                            // remove fingerprint & clear snapshot state - we preserved/handled upgrade
+                            try
+                            {
+                                var key = RecipeFingerprint(selectedRecipe);
+                                lock (_suppressedRecipeKeysLock) { _suppressedRecipeKeys.Remove(key); }
+                                UnityEngine.Debug.LogWarning($"[ChanceCraft] TrySpawnCraftEffect: removed suppressed fingerprint {key}");
+                            }
+                            catch { }
+
                             lock (typeof(ChanceCraft))
                             {
                                 _preCraftSnapshot = null;
@@ -1096,6 +1189,7 @@ namespace ChanceCraft
         // RemoveRequiredResources now supports skipping removal of the resource that equals the recipe result (used for failed upgrades).
         public static void RemoveRequiredResources(InventoryGui gui, Player player, Recipe selectedRecipe, Boolean crafted, bool skipRemovingResultResource = false)
         {
+            UnityEngine.Debug.LogWarning($"[ChanceCraft] RemoveRequiredResources called recipe={RecipeInfo(selectedRecipe)} crafted={crafted} skipResult={skipRemovingResultResource}");
             if (player == null || selectedRecipe == null) return;
             var inventory = player.GetInventory();
             if (inventory == null) return;
