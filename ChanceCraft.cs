@@ -2597,27 +2597,37 @@ namespace ChanceCraft
                                 }
                             }
 
-                            // Prefer per-level amount if present, otherwise use m_amount.
+                            // Prefer base m_amount first (do NOT halve by using m_amountPerLevel).
+                            // Only use m_amountPerLevel as a fallback if m_amount is not present or zero.
                             int amount = 0;
                             object amountPerLevelObj = null;
                             object amountObj = null;
-
-                            var fAmountPerLevel = et.GetField("m_amountPerLevel", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-                            var pAmountPerLevel = et.GetProperty("m_amountPerLevel", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-                            if (fAmountPerLevel != null) amountPerLevelObj = fAmountPerLevel.GetValue(elem);
-                            else if (pAmountPerLevel != null) amountPerLevelObj = pAmountPerLevel.GetValue(elem);
 
                             var fAmount = et.GetField("m_amount", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
                             var pAmount = et.GetProperty("m_amount", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
                             if (fAmount != null) amountObj = fAmount.GetValue(elem);
                             else if (pAmount != null) amountObj = pAmount.GetValue(elem);
 
-                            if (amountPerLevelObj != null)
+                            var fAmountPerLevel = et.GetField("m_amountPerLevel", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                            var pAmountPerLevel = et.GetProperty("m_amountPerLevel", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                            if (fAmountPerLevel != null) amountPerLevelObj = fAmountPerLevel.GetValue(elem);
+                            else if (pAmountPerLevel != null) amountPerLevelObj = pAmountPerLevel.GetValue(elem);
+
+                            // Prefer the explicit m_amount (total). Use m_amountPerLevel only as a fallback.
+                            if (amountObj != null)
+                            {
+                                try { amount = Convert.ToInt32(amountObj); } catch { amount = 0; }
+                                if (amount > 0)
+                                {
+                                    UnityEngine.Debug.LogWarning($"[ChanceCraft] TryGetRequirementsFromGui: using m_amount for resource '{resName}' -> {amount}");
+                                }
+                            }
+                            if (amount == 0 && amountPerLevelObj != null)
                             {
                                 try { amount = Convert.ToInt32(amountPerLevelObj); } catch { amount = 0; }
                                 if (amount > 0)
                                 {
-                                    UnityEngine.Debug.LogWarning($"[ChanceCraft] TryGetRequirementsFromGui: using m_amountPerLevel for resource '{resName}' -> {amount}");
+                                    UnityEngine.Debug.LogWarning($"[ChanceCraft] TryGetRequirementsFromGui: using m_amountPerLevel (fallback) for resource '{resName}' -> {amount}");
                                 }
                             }
 
