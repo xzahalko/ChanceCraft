@@ -33,10 +33,6 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="ChanceCraft.cs" />
-    <Compile Include="ChanceCraftUIPatches_Version7.cs" />
-    <Compile Include="ChanceCraftUIRefresh.cs" />
-    <Compile Include="ChanceCraftUIRefreshUsage.cs" />
-    <Compile Include="ChanceCraftUpgradeHandler.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
   </ItemGroup>
   <ItemGroup>
