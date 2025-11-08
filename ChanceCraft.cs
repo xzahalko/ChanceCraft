@@ -1811,9 +1811,9 @@ namespace ChanceCraft
             }
         }
 
-        // TrySpawnCraftEffect - performs RNG; handles success/failure, including upgrade revert on failure
-        // NOTE: new parameter isUpgradeCall explicitly marks this invocation as handling an UPGRADE operation.
-        // If isUpgradeCall == true, upgrade success/failure flows (revert on failure, remove upgrade resources) are used.
+        // TrySpawnCraftEffect - UPDATED with stronger GUI refresh (refresh left crafting panel)
+        // NOTE: This is the same method as in your file but with added calls to RefreshCraftingPanel
+        // and a small coroutine DelayedRefreshCraftingPanel to force a GUI update on the next frame.
         public static Recipe TrySpawnCraftEffect(InventoryGui gui, Recipe forcedRecipe = null, bool isUpgradeCall = false)
         {
             Recipe selectedRecipe = forcedRecipe;
@@ -2005,8 +2005,7 @@ namespace ChanceCraft
                     }
                     catch { }
 
-                    // NOTE: Run revert attempts unconditionally for upgrade failures.
-                    // This lets us detect and revert newly-created upgraded items even when the "snapshot loop" didn't see an in-place mutation.
+                    // Run revert attempts unconditionally for upgrade failures (as before)
                     try
                     {
                         UnityEngine.Debug.LogWarning("[ChanceCraft] TrySpawnCraftEffect: attempting revert for failed upgrade (unconditional attempt).");
@@ -2037,7 +2036,7 @@ namespace ChanceCraft
                                             continue;
                                         }
 
-                                        // Replacement detection by heuristics: use pre.quality/pre.variant as authoritative revert targets
+                                        // Replacement detection by heuristics
                                         string expectedName = null;
                                         try { expectedName = originalRef?.m_shared?.m_name ?? selectedRecipe.m_item?.m_itemData?.m_shared?.m_name; } catch { expectedName = null; }
                                         if (string.IsNullOrEmpty(expectedName) || invItems == null) continue;
@@ -2237,11 +2236,19 @@ namespace ChanceCraft
                                 }
                             }
 
-                            // If we reverted anything, refresh UI
-                            if (didRevertAny)
+                            // If we reverted anything, refresh UI (inventory + craft left-panel)
+                            try
                             {
-                                try { RefreshInventoryGui(gui); } catch (Exception ex) { UnityEngine.Debug.LogWarning($"[ChanceCraft] TrySpawnCraftEffect: exception while refreshing InventoryGui after revert: {ex}"); }
+                                if (didRevertAny)
+                                {
+                                    try { RefreshInventoryGui(gui); } catch (Exception ex) { UnityEngine.Debug.LogWarning($"[ChanceCraft] TrySpawnCraftEffect: exception while refreshing InventoryGui after revert: {ex}"); }
+                                }
+
+                                // Force left-crafting panel refresh immediately and next frame (covers UI caching/race)
+                                try { RefreshCraftingPanel(gui); } catch (Exception ex) { UnityEngine.Debug.LogWarning($"[ChanceCraft] TrySpawnCraftEffect: RefreshCraftingPanel exception: {ex}"); }
+                                try { gui?.StartCoroutine(DelayedRefreshCraftingPanel(gui, 1)); } catch { /* best-effort */ }
                             }
+                            catch { /* ignore UI refresh errors */ }
 
                             UnityEngine.Debug.LogWarning($"[ChanceCraft] TrySpawnCraftEffect: revert attempts finished, didRevertAny={didRevertAny}");
 
@@ -2272,6 +2279,14 @@ namespace ChanceCraft
 
                         UnityEngine.Debug.LogWarning($"[ChanceCraft] TrySpawnCraftEffect: removing upgrade resources using {RecipeInfo(recipeToUse)}; target={ItemInfo(upgradeTarget)}");
                         RemoveRequiredResourcesUpgrade(gui, Player.m_localPlayer, recipeToUse, upgradeTarget, false);
+
+                        // After resources removed, force a left-panel refresh as well (some UI shows "upgraded" until panel updates)
+                        try
+                        {
+                            try { RefreshCraftingPanel(gui); } catch (Exception ex) { UnityEngine.Debug.LogWarning($"[ChanceCraft] TrySpawnCraftEffect: RefreshCraftingPanel(after-Remove) exception: {ex}"); }
+                            try { gui?.StartCoroutine(DelayedRefreshCraftingPanel(gui, 1)); } catch { /* best-effort */ }
+                        }
+                        catch { }
 
                         Player.m_localPlayer?.Message(MessageHud.MessageType.Center, "<color=red>Upgrade failed — materials consumed, item preserved.</color>");
                     }
@@ -2331,6 +2346,86 @@ namespace ChanceCraft
                 player.Message(MessageHud.MessageType.Center, "<color=red>Crafting failed!</color>");
                 return selectedRecipe;
             }
+        }
+
+        // --- UI helpers to force left-panel refresh ---
+        // best-effort synchronous refresh of InventoryGui crafting/recipe UI
+        private static void RefreshCraftingPanel(InventoryGui gui)
+        {
+            if (gui == null) return;
+            var t = gui.GetType();
+
+            // Try a list of likely methods that update the left panel / recipe list
+            string[] methods = new[]
+            {
+        "UpdateCraftingPanel", "UpdateRecipeList", "UpdateAvailableRecipes", "UpdateCrafting",
+        "UpdateAvailableCrafting", "UpdateRecipes", "UpdateSelectedItem", "Refresh",
+        "RefreshList", "UpdateIcons", "Setup", "OnOpen", "OnShow"
+    };
+
+            foreach (var name in methods)
+            {
+                try
+                {
+                    var m = t.GetMethod(name, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                    if (m != null && m.GetParameters().Length == 0)
+                    {
+                        try { m.Invoke(gui, null); UnityEngine.Debug.LogWarning($"[ChanceCraft] RefreshCraftingPanel: invoked {name}()"); } catch (Exception ex) { UnityEngine.Debug.LogWarning($"[ChanceCraft] RefreshCraftingPanel: {name}() threw: {ex}"); }
+                    }
+                }
+                catch { /* ignore per-method */ }
+            }
+
+            // Force a selected-recipe toggle to make the GUI re-bind its display state
+            try
+            {
+                var selField = t.GetField("m_selectedRecipe", BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
+                if (selField != null)
+                {
+                    var cur = selField.GetValue(gui);
+                    try { selField.SetValue(gui, null); } catch { }
+                    try { selField.SetValue(gui, cur); } catch { }
+                    UnityEngine.Debug.LogWarning("[ChanceCraft] RefreshCraftingPanel: toggled m_selectedRecipe to force rebind");
+                }
+            }
+            catch { /* ignore */ }
+
+            // Try to refresh player-inventory UI component if present
+            try
+            {
+                var inventoryField = t.GetField("m_playerInventory", BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public)
+                                 ?? t.GetField("m_inventory", BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
+                var invObj = inventoryField?.GetValue(gui);
+                if (invObj != null)
+                {
+                    var invType = invObj.GetType();
+                    foreach (var name in new[] { "Refresh", "UpdateIfNeeded", "Update", "OnChanged" })
+                    {
+                        try
+                        {
+                            var rm = invType.GetMethod(name, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                            if (rm != null && rm.GetParameters().Length == 0)
+                            {
+                                try { rm.Invoke(invObj, null); UnityEngine.Debug.LogWarning($"[ChanceCraft] RefreshCraftingPanel: invoked player-inventory {name}()"); } catch { }
+                            }
+                        }
+                        catch { }
+                    }
+                }
+            }
+            catch { /* ignore */ }
+        }
+
+        // coroutine-based delayed refresh — call this to schedule a GUI refresh on the next frame
+        private static IEnumerator DelayedRefreshCraftingPanel(InventoryGui gui, int delayFrames = 1)
+        {
+            if (gui == null)
+                yield break;
+
+            for (int i = 0; i < Math.Max(1, delayFrames); i++)
+                yield return null; // wait frames
+
+            try { RefreshCraftingPanel(gui); } catch (Exception ex) { UnityEngine.Debug.LogWarning($"[ChanceCraft] DelayedRefreshCraftingPanel exception: {ex}"); }
         }
 
         // RemoveRequiredResources: compute amounts; per-level only if upgrade context
@@ -3696,5 +3791,168 @@ namespace ChanceCraft
                 UnityEngine.Debug.LogWarning($"[ChanceCraft] LogInventoryGuiStructure exception: {ex}");
             }
         }
+
+        // Strong UI refresh helper: force Unity UI layout rebuilds and toggle likely crafting panel objects.
+        // Call this after you've mutated item data and invoked RefreshInventoryGui/RefreshCraftingPanel.
+        private static void ForceGuiHardRefresh(InventoryGui gui)
+        {
+            if (gui == null) return;
+            try
+            {
+                // 1) Run the previous best-effort refresh first
+                try { RefreshCraftingPanel(gui); } catch { }
+
+                // 2) Force Canvas update
+                try { UnityEngine.Canvas.ForceUpdateCanvases(); } catch { }
+
+                // 3) Find RectTransforms / UI Components on the InventoryGui and force layout rebuild
+                var t = gui.GetType();
+
+                // Inspect fields and properties for RectTransform / GameObject / Component samples
+                var seen = new HashSet<int>();
+                void TryRebuildObject(object obj)
+                {
+                    if (obj == null) return;
+                    int id = RuntimeHelpers.GetHashCode(obj);
+                    if (seen.Contains(id)) return;
+                    seen.Add(id);
+
+                    // GameObject
+                    if (obj is GameObject go)
+                    {
+                        try
+                        {
+                            // Force deactivate/activate to force UI rebuild (best-effort)
+                            go.SetActive(false);
+                            go.SetActive(true);
+                        }
+                        catch { }
+
+                        var rt = go.GetComponent<RectTransform>();
+                        if (rt != null)
+                        {
+                            try { UnityEngine.UI.LayoutRebuilder.ForceRebuildLayoutImmediate(rt); } catch { }
+                        }
+                        return;
+                    }
+
+                    // Component
+                    if (obj is Component comp)
+                    {
+                        try
+                        {
+                            var go2 = comp.gameObject;
+                            try { go2.SetActive(false); } catch { }
+                            try { go2.SetActive(true); } catch { }
+                        }
+                        catch { }
+
+                        var rt2 = comp.GetComponent<RectTransform>();
+                        if (rt2 != null)
+                        {
+                            try { UnityEngine.UI.LayoutRebuilder.ForceRebuildLayoutImmediate(rt2); } catch { }
+                        }
+                        return;
+                    }
+
+                    // RectTransform directly
+                    if (obj is RectTransform rtf)
+                    {
+                        try { UnityEngine.UI.LayoutRebuilder.ForceRebuildLayoutImmediate(rtf); } catch { }
+                        return;
+                    }
+
+                    // Enumerable: try a few elements
+                    if (obj is System.Collections.IEnumerable ie && !(obj is string))
+                    {
+                        int c = 0;
+                        foreach (var e in ie)
+                        {
+                            if (e == null) continue;
+                            TryRebuildObject(e);
+                            if (++c > 6) break;
+                        }
+                        return;
+                    }
+                }
+
+                try
+                {
+                    // Try InventoryGui fields
+                    foreach (var f in t.GetFields(BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public))
+                    {
+                        try
+                        {
+                            var val = f.GetValue(gui);
+                            if (val == null) continue;
+
+                            // If field name hints a crafting panel - toggle it specifically
+                            var name = f.Name?.ToLowerInvariant() ?? "";
+                            if (name.Contains("craft") || name.Contains("recipe") || name.Contains("panel") || name.Contains("left"))
+                            {
+                                TryRebuildObject(val);
+                            }
+                            else
+                            {
+                                // still attempt rebuild on likely UI types
+                                TryRebuildObject(val);
+                            }
+                        }
+                        catch { /* ignore per-field */ }
+                    }
+
+                    // Try InventoryGui properties
+                    foreach (var p in t.GetProperties(BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public))
+                    {
+                        try
+                        {
+                            if (p.GetIndexParameters().Length > 0) continue;
+                            if (!p.CanRead) continue;
+                            var val = p.GetValue(gui);
+                            if (val == null) continue;
+                            TryRebuildObject(val);
+                        }
+                        catch { /* ignore per-prop */ }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    UnityEngine.Debug.LogWarning($"[ChanceCraft] ForceGuiHardRefresh: reflection scan exception: {ex}");
+                }
+
+                // 4) As a fallback, toggle the InventoryGui gameObject itself (forces full redraw)
+                try
+                {
+                    var igGo = (gui as Component)?.gameObject;
+                    if (igGo != null)
+                    {
+                        igGo.SetActive(false);
+                        // Wait a tiny bit by scheduling re-enable next frame via coroutine if possible
+                        try
+                        {
+                            gui.StartCoroutine(ReenableNextFrame(igGo));
+                        }
+                        catch
+                        {
+                            // immediate reenable if coroutine can't be started
+                            try { igGo.SetActive(true); } catch { }
+                        }
+                    }
+                }
+                catch { /* ignore */ }
+            }
+            catch (Exception ex)
+            {
+                UnityEngine.Debug.LogWarning($"[ChanceCraft] ForceGuiHardRefresh exception: {ex}");
+            }
+        }
+
+        // Coroutine helper to re-enable GameObject on next frame (best-effort)
+        private static IEnumerator ReenableNextFrame(GameObject go)
+        {
+            yield return null;
+            try { if (go != null) go.SetActive(true); } catch { }
+        }
+
     }
 }
