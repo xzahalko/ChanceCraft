@@ -1003,7 +1003,10 @@ namespace ChanceCraft
                     // Save exact recipe instance for the call (so Postfix uses same object)
                     _savedRecipeForCall = selectedRecipe;
 
-                    // --- GUI-provided requirements detection (ONLY mark upgrade when it truly looks like one) ---
+                    // Replace the existing GUI-requirements detection block in Prefix with this block.
+                    // Paste this where your current TryGetRequirementsFromGui invocation / handling is.
+
+                    // --- GUI-provided requirements detection (treat as upgrade when GUI differs from recipe) ---
                     try
                     {
                         // Capture upgrade target item early if possible (helps detection)
@@ -1069,33 +1072,19 @@ namespace ChanceCraft
                                         catch { }
                                     }
                                 }
-
-                                if (_upgradeTargetItem != null)
-                                    UnityEngine.Debug.LogWarning($"[ChanceCraft] Prefix: captured upgrade target early: {ItemInfo(_upgradeTargetItem)}");
                             }
                             catch { /* ignore capture exceptions */ }
                         }
 
-                        // Read GUI requirement list (TryGetRequirementsFromGui prefers m_amountPerLevel when available)
+                        // Read GUI requirement list (prefer m_amount but do not normalize here)
                         List<(string name, int amount)> guiReqs;
                         if (TryGetRequirementsFromGui(__instance, out guiReqs) && guiReqs != null && guiReqs.Count > 0)
                         {
-                            // Decide whether this GUI list corresponds to an UPGRADE operation.
-                            // Only treat it as upgrade when:
-                            //  - there is a captured target item and finalQuality > targetQuality (levelsToUpgrade > 0), OR
-                            //  - InventoryGui explicitly signals craft-upgrade (m_craftUpgrade > 1), OR
-                            //  - recipe consumes its result (RecipeConsumesResult)
-                            int levelsToUpgrade = 0;
+                            bool guiIndicatesUpgrade = false;
+
                             try
                             {
-                                var finalQuality = selectedRecipe.m_item?.m_itemData?.m_quality ?? 0;
-                                if (_upgradeTargetItem != null)
-                                {
-                                    var targetQuality = _upgradeTargetItem.m_quality;
-                                    levelsToUpgrade = Math.Max(0, finalQuality - targetQuality);
-                                }
-
-                                // fallback: check explicit GUI craft multiplier
+                                // 1) explicit craft-upgrade multiplier on GUI
                                 var craftUpgradeFieldLocal = typeof(InventoryGui).GetField("m_craftUpgrade", BindingFlags.Instance | BindingFlags.NonPublic);
                                 int craftUpgradeVal = 1;
                                 if (craftUpgradeFieldLocal != null)
@@ -1107,30 +1096,95 @@ namespace ChanceCraft
                                     }
                                     catch { craftUpgradeVal = 1; }
                                 }
+                                if (craftUpgradeVal > 1) guiIndicatesUpgrade = true;
 
-                                bool looksLikeUpgrade =
-                                    levelsToUpgrade > 0 ||
-                                    craftUpgradeVal > 1 ||
-                                    RecipeConsumesResult(selectedRecipe);
-
-                                if (!looksLikeUpgrade)
+                                // 2) we captured explicit target and final quality > target quality
+                                try
                                 {
-                                    // GUI lists are present but do not indicate an upgrade — ignore them for upgrade-marking.
-                                    UnityEngine.Debug.LogWarning("[ChanceCraft] Prefix-DBG: GUI reqs found but not an upgrade (ignored).");
+                                    var finalQuality = selectedRecipe.m_item?.m_itemData?.m_quality ?? 0;
+                                    if (_upgradeTargetItem != null)
+                                    {
+                                        var targetQuality = _upgradeTargetItem.m_quality;
+                                        if (finalQuality > targetQuality) guiIndicatesUpgrade = true;
+                                    }
                                 }
-                                else
-                                {
-                                    // It's an upgrade: store GUI-provided requirements as-is (no division).
-                                    _isUpgradeDetected = true;
-                                    _upgradeGuiRequirements = guiReqs;
+                                catch { }
 
-                                    var dbgJoined = string.Join(", ", _upgradeGuiRequirements.Select(x => x.name + ":" + x.amount));
-                                    UnityEngine.Debug.LogWarning("[ChanceCraft] Prefix-DBG: marked as upgrade and stored GUI requirements: " + dbgJoined);
+                                // 3) recipe consumes its own result (explicit upgrade recipe)
+                                if (RecipeConsumesResult(selectedRecipe)) guiIndicatesUpgrade = true;
+
+                                // 4) GUI list differs from recipe resources (names or amounts) => treat as upgrade UI
+                                try
+                                {
+                                    // Build base recipe resource map (name -> amount)
+                                    // Build base recipe resource map (name -> amount)
+                                    var baseResources = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+                                    var resourcesFieldBase = selectedRecipe.GetType().GetField("m_resources", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                                    var baseResourcesEnum = resourcesFieldBase?.GetValue(selectedRecipe) as System.Collections.IEnumerable;
+                                    if (baseResourcesEnum != null)
+                                    {
+                                        foreach (var ritem in baseResourcesEnum)
+                                        {
+                                            if (ritem == null) continue;
+                                            try
+                                            {
+                                                var rt = ritem.GetType();
+                                                var nameObj = rt.GetField("m_resItem", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)?.GetValue(ritem);
+                                                string resName = null;
+                                                if (nameObj != null)
+                                                {
+                                                    var itemData = nameObj.GetType().GetField("m_itemData", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)?.GetValue(nameObj);
+                                                    var shared = itemData?.GetType().GetField("m_shared", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)?.GetValue(itemData);
+                                                    resName = shared?.GetType().GetField("m_name", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)?.GetValue(shared) as string;
+                                                }
+                                                var amountObj = rt.GetField("m_amount", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)?.GetValue(ritem);
+                                                int amt = 0;
+                                                if (amountObj != null) { try { amt = Convert.ToInt32(amountObj); } catch { amt = 0; } }
+                                                if (!string.IsNullOrEmpty(resName))
+                                                {
+                                                    if (baseResources.ContainsKey(resName)) baseResources[resName] += amt;
+                                                    else baseResources[resName] = amt;
+                                                }
+                                            }
+                                            catch { /* ignore per-entry errors */ }
+                                        }
+                                    }
+
+                                    // Compare GUI list to baseResources: if counts differ or any amount/name mismatch => GUI likely showing upgrade-costs
+                                    var guiMap = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+                                    foreach (var g in guiReqs) guiMap[g.name] = guiMap.ContainsKey(g.name) ? guiMap[g.name] + g.amount : g.amount;
+
+                                    // If GUI has fewer entries than base recipe OR any amounts differ -> treat as upgrade UI
+                                    if (guiMap.Count != baseResources.Count) guiIndicatesUpgrade = true;
+                                    else
+                                    {
+                                        foreach (var kv in guiMap)
+                                        {
+                                            if (!baseResources.TryGetValue(kv.Key, out var baseAmt) || baseAmt != kv.Value)
+                                            {
+                                                guiIndicatesUpgrade = true;
+                                                break;
+                                            }
+                                        }
+                                    }
                                 }
+                                catch { /* ignore compare errors */ }
+
+                                // 5) if any GUI requirement originated from m_amountPerLevel (TryGetRequirementsFromGui logged that), that's a strong signal for upgrade UI
+                                // Note: TryGetRequirementsFromGui already logs whether it used m_amountPerLevel; we can rely on mismatch test above as well.
                             }
-                            catch (Exception ex)
+                            catch { /* swallow heuristics exceptions - be conservative */ }
+
+                            if (guiIndicatesUpgrade)
                             {
-                                UnityEngine.Debug.LogWarning($"[ChanceCraft] Prefix-DBG: exception while evaluating GUI reqs as upgrade: {ex}");
+                                _isUpgradeDetected = true;
+                                _upgradeGuiRequirements = guiReqs;
+                                var dbgJoined = string.Join(", ", guiReqs.Select(x => x.name + ":" + x.amount));
+                                UnityEngine.Debug.LogWarning("[ChanceCraft] Prefix-DBG: GUI requirement list indicates UPGRADE -> marking as upgrade and storing GUI requirements: " + dbgJoined);
+                            }
+                            else
+                            {
+                                UnityEngine.Debug.LogWarning("[ChanceCraft] Prefix-DBG: GUI reqs found but not flagged as upgrade by heuristics (ignored).");
                             }
                         }
                     }
