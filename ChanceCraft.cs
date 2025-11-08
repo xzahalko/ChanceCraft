@@ -1925,14 +1925,79 @@ namespace ChanceCraft
                     UnityEngine.Debug.LogWarning($"[ChanceCraft] TrySpawnCraftEffect: exception while checking snapshot for in-place upgrade: {ex}");
                 }
 
+                // Revert in-place upgrades performed by the game if RNG indicates the craft/upgrade failed.
+                // Then remove the upgrade resources (so materials are consumed) and notify the player.
                 if (gameAlreadyHandled)
                 {
-                    lock (typeof(ChanceCraftPlugin))
+                    try
                     {
-                        _preCraftSnapshot = null;
-                        _preCraftSnapshotData = null;
-                        _snapshotRecipe = null;
+                        UnityEngine.Debug.LogWarning("[ChanceCraft] TrySpawnCraftEffect: game already applied an in-place upgrade but RNG says FAILURE -> reverting changes.");
+
+                        // Attempt to revert recorded pre-craft quality/variant for each snapshot item
+                        lock (typeof(ChanceCraftPlugin))
+                        {
+                            if (_preCraftSnapshotData != null)
+                            {
+                                foreach (var kv in _preCraftSnapshotData)
+                                {
+                                    var item = kv.Key;
+                                    var pre = kv.Value; // (quality, variant)
+                                    if (item == null) continue;
+                                    try
+                                    {
+                                        // Only change if different (best-effort)
+                                        if (item.m_quality != pre.quality || item.m_variant != pre.variant)
+                                        {
+                                            UnityEngine.Debug.LogWarning($"[ChanceCraft] TrySpawnCraftEffect: reverting item {ItemInfo(item)} -> q={pre.quality} v={pre.variant}");
+                                            item.m_quality = pre.quality;
+                                            item.m_variant = pre.variant;
+                                            // NOTE: Inventory.Changed() does not exist in your API, so we do not call it here.
+                                            // If the UI does not immediately reflect the revert, we can add a refresh call once
+                                            // we know the correct API method for your Valheim/Unity version.
+                                        }
+                                    }
+                                    catch (Exception ex)
+                                    {
+                                        UnityEngine.Debug.LogWarning($"[ChanceCraft] TrySpawnCraftEffect: exception while reverting item {ItemInfo(item)}: {ex}");
+                                    }
+                                }
+                            }
+
+                            // Clear snapshot state now that we've reverted.
+                            _preCraftSnapshot = null;
+                            _preCraftSnapshotData = null;
+                            _snapshotRecipe = null;
+                        }
                     }
+                    catch (Exception ex)
+                    {
+                        UnityEngine.Debug.LogWarning($"[ChanceCraft] TrySpawnCraftEffect: exception while reverting in-place upgrade: {ex}");
+                    }
+
+                    // Now remove the upgrade resources (preserve target item since we've reverted it)
+                    try
+                    {
+                        // choose upgrade recipe to use for removal (same selection logic as other branches)
+                        var recipeToUse = _upgradeGuiRecipe ?? _upgradeRecipe ?? GetUpgradeRecipeFromGui(gui) ?? selectedRecipe;
+                        if (ReferenceEquals(recipeToUse, selectedRecipe))
+                        {
+                            var candidate = FindBestUpgradeRecipeCandidate(selectedRecipe);
+                            if (candidate != null) recipeToUse = candidate;
+                        }
+
+                        // best-effort to pick upgrade target instance (may be null)
+                        var upgradeTarget = _upgradeTargetItem ?? GetSelectedInventoryItem(gui);
+
+                        UnityEngine.Debug.LogWarning($"[ChanceCraft] TrySpawnCraftEffect: after revert removing upgrade resources using {RecipeInfo(recipeToUse)}; target={ItemInfo(upgradeTarget)}");
+                        RemoveRequiredResourcesUpgrade(gui, Player.m_localPlayer, recipeToUse, upgradeTarget, false);
+
+                        Player.m_localPlayer?.Message(MessageHud.MessageType.Center, "<color=red>Upgrade failed — materials consumed, item preserved.</color>");
+                    }
+                    catch (Exception ex)
+                    {
+                        UnityEngine.Debug.LogWarning($"[ChanceCraft] TrySpawnCraftEffect: exception while removing resources after revert: {ex}");
+                    }
+
                     return null;
                 }
 
