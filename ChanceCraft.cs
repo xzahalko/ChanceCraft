@@ -1704,9 +1704,13 @@ namespace ChanceCraft
             UnityEngine.Debug.LogWarning("[chancecraft] before rand");
             var player = Player.m_localPlayer;
 
+            // Check if this is an upgrade operation - upgrades always succeed (100% success rate)
+            bool isUpgrade = IsUpgradeOperation(gui, selectedRecipe) || _isUpgradeDetected;
+
             float chance = 0.6f;
 
             // Determine base chance by item type (weapon / armor / arrow)
+            // Note: Upgrades ignore this chance and always succeed
             if (itemType == ItemDrop.ItemData.ItemType.OneHandedWeapon ||
                 itemType == ItemDrop.ItemData.ItemType.TwoHandedWeapon ||
                 itemType == ItemDrop.ItemData.ItemType.Bow ||
@@ -1726,15 +1730,23 @@ namespace ChanceCraft
                 chance = arrowSuccessChance.Value;
             }
 
-            // Optional small quality scaling
+            // Optional small quality scaling (only for crafting, not upgrades)
             int qualityLevel = selectedRecipe.m_item?.m_itemData?.m_quality ?? 1;
             float qualityScalePerLevel = 0.05f;
             float qualityFactor = 1f + qualityScalePerLevel * Math.Max(0, qualityLevel - 1);
             chance = Mathf.Clamp01(chance * qualityFactor);
 
-            UnityEngine.Debug.LogWarning($"[chancecraft] final chance = {chance} rand={UnityEngine.Random.value}");
+            // Upgrades always succeed (100% success rate), crafting uses configured chance
+            bool success = isUpgrade || (UnityEngine.Random.value <= chance);
 
-            if (UnityEngine.Random.value <= chance)
+            if (isUpgrade)
+            {
+                UnityEngine.Debug.LogWarning("[ChanceCraft] Upgrade detected - guaranteed success (100% success rate)");
+            }
+
+            UnityEngine.Debug.LogWarning($"[chancecraft] final chance = {chance} rand={UnityEngine.Random.value} isUpgrade={isUpgrade} success={success}");
+
+            if (success)
             {
                 UnityEngine.Debug.LogWarning("[chancecraft] success");
                 var craftingStationField = typeof(InventoryGui).GetField("currentCraftingStation", BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
@@ -1844,245 +1856,21 @@ namespace ChanceCraft
             {
                 UnityEngine.Debug.LogWarning("[chancecraft] failed");
 
-                // If this failed attempt looks like an upgrade, remove resources using upgrade recipe if available,
-                // but do NOT remove the base/upgrading item. Also revert any in-place upgrade or replacement the game may have applied.
+                // IMPORTANT: Upgrades now have 100% success rate and should NEVER reach this failure path
+                // This safety check ensures upgrade failure logic is never executed
                 if (IsUpgradeOperation(gui, selectedRecipe) || _isUpgradeDetected)
                 {
-                    // Before removing resources, detect whether the game already applied an in-place upgrade (mutation) or created a replacement.
-                    bool gameAlreadyHandled = false;
-                    try
+                    UnityEngine.Debug.LogError("[ChanceCraft] ERROR: Upgrade reached failure path - this should never happen! Upgrades have 100% success rate.");
+                    UnityEngine.Debug.LogError("[ChanceCraft] Skipping failure logic to preserve upgrade success. Please report this as a bug.");
+                    
+                    // Clean up any snapshot state
+                    lock (typeof(ChanceCraftPlugin))
                     {
-                        lock (typeof(ChanceCraftPlugin))
-                        {
-                            if (_snapshotRecipe != null && _snapshotRecipe == selectedRecipe && _preCraftSnapshotData != null && _preCraftSnapshotData.Count > 0)
-                            {
-                                // 1) detect direct in-place mutation: any tracked ItemData now has higher quality
-                                foreach (var kv in _preCraftSnapshotData)
-                                {
-                                    var item = kv.Key;
-                                    var pre = kv.Value; // (quality, variant)
-                                    if (item == null || item.m_shared == null) continue;
-                                    int currentQuality = item.m_quality;
-                                    int currentVariant = item.m_variant;
-                                    if (currentQuality > pre.quality && currentVariant == pre.variant)
-                                    {
-                                        gameAlreadyHandled = true;
-                                        UnityEngine.Debug.LogWarning($"[ChanceCraft] TrySpawnCraftEffect: detected pre-snapshot item upgraded in-place: {ItemInfo(item)} (was q={pre.quality} -> now q={currentQuality})");
-                                        break;
-                                    }
-                                }
-
-                                // 2) if no direct mutation detected, detect replacement: inventory-level deltas
-                                if (!gameAlreadyHandled)
-                                {
-                                    try
-                                    {
-                                        var localPlayer = Player.m_localPlayer;
-                                        var inv = localPlayer?.GetInventory();
-                                        if (inv != null)
-                                        {
-                                            // Build pre-count map: name -> quality -> count
-                                            var preCounts = new Dictionary<string, Dictionary<int, int>>(StringComparer.OrdinalIgnoreCase);
-                                            foreach (var kv in _preCraftSnapshotData)
-                                            {
-                                                var it = kv.Key;
-                                                var pre = kv.Value;
-                                                if (it == null || it.m_shared == null) continue;
-                                                string name = it.m_shared.m_name;
-                                                if (string.IsNullOrEmpty(name)) continue;
-                                                if (!preCounts.TryGetValue(name, out var qmap)) { qmap = new Dictionary<int, int>(); preCounts[name] = qmap; }
-                                                qmap.TryGetValue(pre.quality, out int c); qmap[pre.quality] = c + 1;
-                                            }
-
-                                            // Build current counts
-                                            var currCounts = new Dictionary<string, Dictionary<int, int>>(StringComparer.OrdinalIgnoreCase);
-                                            foreach (var it in inv.GetAllItems())
-                                            {
-                                                if (it == null || it.m_shared == null) continue;
-                                                string name = it.m_shared.m_name;
-                                                if (string.IsNullOrEmpty(name)) continue;
-                                                if (!currCounts.TryGetValue(name, out var qmap)) { qmap = new Dictionary<int, int>(); currCounts[name] = qmap; }
-                                                qmap.TryGetValue(it.m_quality, out int c); qmap[it.m_quality] = c + 1;
-                                            }
-
-                                            // Compare for any name where lower-quality decreased and next-quality increased
-                                            foreach (var nameEntry in preCounts)
-                                            {
-                                                var name = nameEntry.Key;
-                                                var preQmap = nameEntry.Value;
-                                                if (!currCounts.TryGetValue(name, out var currQmap)) continue;
-
-                                                foreach (var preQkv in preQmap)
-                                                {
-                                                    int preQ = preQkv.Key;
-                                                    int preCount = preQkv.Value;
-                                                    int currLow = currQmap.TryGetValue(preQ, out var curLowCnt) ? curLowCnt : 0;
-                                                    int currHigh = currQmap.TryGetValue(preQ + 1, out var curHighCnt) ? curHighCnt : 0;
-
-                                                    // If number of low-quality items decreased and high-quality increased, assume one was upgraded (replacement)
-                                                    if (currLow < preCount && currHigh > (preQmap.TryGetValue(preQ + 1, out var preHighCnt) ? preHighCnt : 0))
-                                                    {
-                                                        gameAlreadyHandled = true;
-                                                        UnityEngine.Debug.LogWarning($"[ChanceCraft] TrySpawnCraftEffect: detected replacement-upgrade for '{name}' preQ={preQ} preCount={preCount} currLow={currLow} currHigh={currHigh}");
-                                                        break;
-                                                    }
-                                                }
-                                                if (gameAlreadyHandled) break;
-                                            }
-                                        }
-                                    }
-                                    catch (Exception ex)
-                                    {
-                                        UnityEngine.Debug.LogWarning($"[ChanceCraft] TrySpawnCraftEffect: exception while checking replacement-upgrade delta: {ex}");
-                                    }
-                                }
-                            }
-                        }
+                        _preCraftSnapshot = null;
+                        _preCraftSnapshotData = null;
+                        _snapshotRecipe = null;
                     }
-                    catch (Exception ex)
-                    {
-                        UnityEngine.Debug.LogWarning($"[ChanceCraft] TrySpawnCraftEffect: exception while checking snapshot for in-place/replace upgrade: {ex}");
-                    }
-
-                    // If the game mutated or replaced an item to upgraded quality, revert it back to pre-craft quality when RNG says failure.
-                    if (gameAlreadyHandled)
-                    {
-                        try
-                        {
-                            UnityEngine.Debug.LogWarning("[ChanceCraft] TrySpawnCraftEffect: reverting in-place or replacement upgrade because RNG says FAILURE.");
-
-                            // 1) revert direct in-place mutations first (by reference)
-                            lock (typeof(ChanceCraftPlugin))
-                            {
-                                if (_preCraftSnapshotData != null && _preCraftSnapshotData.Count > 0)
-                                {
-                                    foreach (var kv in _preCraftSnapshotData)
-                                    {
-                                        var item = kv.Key;
-                                        var pre = kv.Value; // (quality, variant)
-                                        if (item == null) continue;
-                                        try
-                                        {
-                                            if (item.m_quality != pre.quality || item.m_variant != pre.variant)
-                                            {
-                                                UnityEngine.Debug.LogWarning($"[ChanceCraft] TrySpawnCraftEffect: reverting item {ItemInfo(item)} -> q={pre.quality} v={pre.variant}");
-                                                item.m_quality = pre.quality;
-                                                item.m_variant = pre.variant;
-                                                // Best-effort: we don't call inventory UI refresh methods because they vary by version.
-                                            }
-                                        }
-                                        catch (Exception ex)
-                                        {
-                                            UnityEngine.Debug.LogWarning($"[ChanceCraft] TrySpawnCraftEffect: exception while reverting item {ItemInfo(item)}: {ex}");
-                                        }
-                                    }
-                                }
-                            }
-
-                            // 2) If replacement case: try to find a newly-created upgraded item and revert it back to previous quality
-                            try
-                            {
-                                var localPlayer = Player.m_localPlayer;
-                                var inv = localPlayer?.GetInventory();
-                                if (inv != null && _preCraftSnapshotData != null)
-                                {
-                                    // Build map of pre counts by (name,quality)
-                                    var preCounts = new Dictionary<(string name, int quality), int>(new ValueTupleComparer());
-                                    var preQualityMap = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase); // track an example pre-quality per name
-                                    foreach (var kv in _preCraftSnapshotData)
-                                    {
-                                        var it = kv.Key;
-                                        var pre = kv.Value;
-                                        if (it == null || it.m_shared == null) continue;
-                                        var name = it.m_shared.m_name;
-                                        preCounts.TryGetValue((name, pre.quality), out int c);
-                                        preCounts[(name, pre.quality)] = c + 1;
-                                        if (!preQualityMap.ContainsKey(name)) preQualityMap[name] = pre.quality;
-                                    }
-
-                                    // Build current inventory grouping
-                                    var currentByNameQuality = new Dictionary<(string name, int quality), List<ItemDrop.ItemData>>(new ValueTupleComparer());
-                                    foreach (var it in inv.GetAllItems())
-                                    {
-                                        if (it == null || it.m_shared == null) continue;
-                                        var name = it.m_shared.m_name;
-                                        var key = (name, it.m_quality);
-                                        if (!currentByNameQuality.TryGetValue(key, out var list)) { list = new List<ItemDrop.ItemData>(); currentByNameQuality[key] = list; }
-                                        list.Add(it);
-                                    }
-
-                                    // For every pre-record we didn't revert by reference, if we observe more high-quality items than pre, revert one of them
-                                    foreach (var preEntry in preQualityMap)
-                                    {
-                                        var name = preEntry.Key;
-                                        int preQ = preEntry.Value;
-                                        int preLowCount = preCounts.TryGetValue((name, preQ), out var plc) ? plc : 0;
-                                        int curLowCount = currentByNameQuality.TryGetValue((name, preQ), out var currLowList) ? currLowList.Count : 0;
-                                        int curHighCount = currentByNameQuality.TryGetValue((name, preQ + 1), out var currHighList) ? currHighList.Count : 0;
-
-                                        if (curLowCount < preLowCount && curHighCount > 0)
-                                        {
-                                            // choose a candidate to revert: prefer items not in original snapshot (we no longer have instance membership easily),
-                                            // so pick any item of (name, preQ+1) and revert its quality down.
-                                            var candidateList = currentByNameQuality[(name, preQ + 1)];
-                                            foreach (var cand in candidateList)
-                                            {
-                                                try
-                                                {
-                                                    // ensure not the protected upgrade target (we don't want to destroy the intended target)
-                                                    if (cand == _upgradeTargetItem) continue;
-                                                    UnityEngine.Debug.LogWarning($"[ChanceCraft] TrySpawnCraftEffect: reverting replaced upgraded item {ItemInfo(cand)} quality {cand.m_quality} -> {preQ}");
-                                                    cand.m_quality = preQ;
-                                                    // don't change variant unless we have pre-variant info; best-effort only
-                                                    break;
-                                                }
-                                                catch { }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                            catch (Exception ex)
-                            {
-                                UnityEngine.Debug.LogWarning($"[ChanceCraft] TrySpawnCraftEffect: exception while attempting replacement revert: {ex}");
-                            }
-
-                            // After revert attempt, clear snapshots
-                            lock (typeof(ChanceCraftPlugin))
-                            {
-                                _preCraftSnapshot = null;
-                                _preCraftSnapshotData = null;
-                                _snapshotRecipe = null;
-                            }
-                        }
-                        catch (Exception ex)
-                        {
-                            UnityEngine.Debug.LogWarning($"[ChanceCraft] TrySpawnCraftEffect: exception while reverting in-place/replacement upgrade: {ex}");
-                        }
-                    }
-
-                    // Now remove the upgrade resources (preserve target item since we've tried to revert it)
-                    try
-                    {
-                        var recipeToUse = _upgradeGuiRecipe ?? _upgradeRecipe ?? GetUpgradeRecipeFromGui(gui) ?? selectedRecipe;
-                        if (ReferenceEquals(recipeToUse, selectedRecipe))
-                        {
-                            var candidate = FindBestUpgradeRecipeCandidate(selectedRecipe);
-                            if (candidate != null) recipeToUse = candidate;
-                        }
-
-                        var upgradeTarget = _upgradeTargetItem ?? GetSelectedInventoryItem(gui);
-
-                        UnityEngine.Debug.LogWarning($"[ChanceCraft] TrySpawnCraftEffect: removing upgrade resources using {RecipeInfo(recipeToUse)}; target={ItemInfo(upgradeTarget)}");
-                        RemoveRequiredResourcesUpgrade(gui, Player.m_localPlayer, recipeToUse, upgradeTarget, false);
-
-                        Player.m_localPlayer?.Message(MessageHud.MessageType.Center, "<color=red>Upgrade failed — materials consumed, item preserved.</color>");
-                    }
-                    catch (Exception ex)
-                    {
-                        UnityEngine.Debug.LogWarning($"[ChanceCraft] TrySpawnCraftEffect: exception while removing resources after failure: {ex}");
-                    }
-
+                    
                     return null;
                 }
 
