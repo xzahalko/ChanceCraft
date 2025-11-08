@@ -57,16 +57,16 @@ namespace ChanceCraft
             weaponSuccessChance = Config.Bind("General", "WeaponSuccessChance", 0.6f, new ConfigDescription("Chance to successfully craft weapons (0.0 - 1.0)", new AcceptableValueRange<float>(0f, 1f)));
             armorSuccessChance = Config.Bind("General", "ArmorSuccessChance", 0.6f, new ConfigDescription("Chance to successfully craft armors (0.0 - 1.0)", new AcceptableValueRange<float>(0f, 1f)));
             arrowSuccessChance = Config.Bind("General", "ArrowSuccessChance", 0.6f, new ConfigDescription("Chance to successfully craft arrows (0.0 - 1.0)", new AcceptableValueRange<float>(0f, 1f)));
-//            myBossEithkyrStrength = Config.Bind("General", "Eithkyr stength", 0.6f, new ConfigDescription("Strength of Eithkyr (0.0 - 1.0)", new AcceptableValueRange<float>(0f, 1f)));
+            //            myBossEithkyrStrength = Config.Bind("General", "Eithkyr stength", 0.6f, new ConfigDescription("Strength of Eithkyr (0.0 - 1.0)", new AcceptableValueRange<float>(0f, 1f)));
             Logger.LogInfo($"ChanceCraft plugin loaded. Crafting weapons success chance set to {weaponSuccessChance.Value * 100}%.");
             Logger.LogInfo($"ChanceCraft plugin loaded. Crafting armors success chance set to {armorSuccessChance.Value * 100}%.");
             Logger.LogInfo($"ChanceCraft plugin loaded. Crafting arrow success chance set to {arrowSuccessChance.Value * 100}%.");
 
             UnityEngine.Debug.LogWarning("[ChanceCraft] Awake called!");
 
-//            myBossEithkyrStrength.SettingChanged += (sender, args) => {
-//                UpdateBossStrength();
-//            };
+            //            myBossEithkyrStrength.SettingChanged += (sender, args) => {
+            //                UpdateBossStrength();
+            //            };
 
             try
             {
@@ -109,7 +109,7 @@ namespace ChanceCraft
                 var character = eikthyr.GetComponent<Character>();
                 if (character != null)
                 {
-                    character.m_health = myBossEithkyrStrength.Value*1000;
+                    character.m_health = myBossEithkyrStrength.Value * 1000;
                     UnityEngine.Debug.LogWarning($"[ChanceCraft] Eikthyr health set to {myBossEithkyrStrength.Value}");
                 }
                 else
@@ -367,21 +367,29 @@ namespace ChanceCraft
                     _savedRecipeForCall = null;
                     IsDoCraft = false;
 
-                    // Call TrySpawnCraftEffect and RemoveCraftedItem using the recipe instance we controlled.
+                    // Call TrySpawnCraftEffect and REMOVE crafted item ONLY for a failed suppressed craft and ONLY if this is NOT an upgrade.
                     Recipe recept = ChanceCraft.TrySpawnCraftEffect(__instance, recipeForLogic);
-//                    if (player != null && recept != null)
-//                    {
-//                        // If this operation looks like an upgrade, do not remove the crafted/upgraded item.
-//                        if (IsUpgradeOperation(__instance, recept))
-//                        {
-//                            UnityEngine.Debug.LogWarning("[ChanceCraft] Detected upgrade attempt — skipping RemoveCraftedItem to avoid deleting upgraded item on failure.");
-//                        }
-//                        else
-//                        {
-//                            UnityEngine.Debug.LogWarning("[ChanceCraft] Got crafted item, removing crafted item from inventory via RemoveCraftedItem.");
-//                            ChanceCraft.RemoveCraftedItem(player, recept);
-//                        }
-//                    }
+
+                    if (player != null && recept != null)
+                    {
+                        try
+                        {
+                            // If this operation looks like an upgrade, skip removal and let the game handle it.
+                            if (IsUpgradeOperation(__instance, recept))
+                            {
+                                UnityEngine.Debug.LogWarning("[ChanceCraft] Postfix: detected upgrade operation — skipping crafted-item removal.");
+                            }
+                            else
+                            {
+                                UnityEngine.Debug.LogWarning("[ChanceCraft] Postfix: failed craft detected for multi-resource recipe — removing crafted item from inventory.");
+                                ChanceCraft.RemoveCraftedItem(player, recept);
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            UnityEngine.Debug.LogWarning($"[ChanceCraft] Postfix: Exception while removing crafted item: {ex}");
+                        }
+                    }
                 }
                 catch (Exception ex)
                 {
@@ -411,6 +419,199 @@ namespace ChanceCraft
                 }
             }
             return craftedItems;
+        }
+
+        // Replace signature and the initial selection logic with this:
+        public static Recipe TrySpawnCraftEffect(InventoryGui gui, Recipe forcedRecipe = null)
+        {
+            Recipe selectedRecipe = forcedRecipe;
+
+            if (selectedRecipe == null)
+            {
+                var selectedRecipeField = typeof(InventoryGui).GetField("m_selectedRecipe", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                if (selectedRecipeField != null)
+                {
+                    object value = selectedRecipeField.GetValue(gui);
+                    if (value != null && value.GetType().Name == "RecipeDataPair")
+                    {
+                        var recipeProp = value.GetType().GetProperty("Recipe", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                        if (recipeProp != null)
+                            selectedRecipe = recipeProp.GetValue(value) as Recipe;
+                    }
+                    else
+                    {
+                        selectedRecipe = value as Recipe;
+                    }
+                }
+            }
+
+            if (selectedRecipe == null || Player.m_localPlayer == null)
+                return null;
+
+            // --- Only apply to weapons, armors, and arrows ---
+            var itemType = selectedRecipe.m_item?.m_itemData?.m_shared?.m_itemType;
+            if (itemType != ItemDrop.ItemData.ItemType.OneHandedWeapon &&
+                itemType != ItemDrop.ItemData.ItemType.TwoHandedWeapon &&
+                itemType != ItemDrop.ItemData.ItemType.Bow &&
+                itemType != ItemDrop.ItemData.ItemType.TwoHandedWeaponLeft &&
+                itemType != ItemDrop.ItemData.ItemType.Shield &&
+                itemType != ItemDrop.ItemData.ItemType.Helmet &&
+                itemType != ItemDrop.ItemData.ItemType.Chest &&
+                itemType != ItemDrop.ItemData.ItemType.Legs &&
+                itemType != ItemDrop.ItemData.ItemType.Ammo)
+            {
+                UnityEngine.Debug.LogWarning("[ChanceCraft] Item type not eligible for TrySpawnCraftEffect.");
+                return null;
+            }
+            // -------------------------------------------------
+
+            UnityEngine.Debug.LogWarning("[chancecraft] berore rand");
+            float rand = UnityEngine.Random.value;
+            var player = Player.m_localPlayer;
+
+            UnityEngine.Debug.LogWarning($"[chancecraft] successChance.Value = {rand}");
+            // Determine the correct success chance based on item type
+            float chance = 0.6f; // default fallback
+            if (itemType == ItemDrop.ItemData.ItemType.OneHandedWeapon ||
+                itemType == ItemDrop.ItemData.ItemType.TwoHandedWeapon ||
+                itemType == ItemDrop.ItemData.ItemType.Bow ||
+                itemType == ItemDrop.ItemData.ItemType.TwoHandedWeaponLeft)
+            {
+                chance = weaponSuccessChance.Value;
+            }
+            else if (itemType == ItemDrop.ItemData.ItemType.Shield ||
+                     itemType == ItemDrop.ItemData.ItemType.Helmet ||
+                     itemType == ItemDrop.ItemData.ItemType.Chest ||
+                     itemType == ItemDrop.ItemData.ItemType.Legs)
+            {
+                chance = armorSuccessChance.Value;
+            }
+            else if (itemType == ItemDrop.ItemData.ItemType.Ammo)
+            {
+                chance = arrowSuccessChance.Value;
+            }
+
+            if (UnityEngine.Random.value <= chance)
+            {
+                UnityEngine.Debug.LogWarning("[chancecraft] povedlo se");
+                // Success: spawn crafting effect at player position using Create(pos, rot)
+                var craftingStationField = typeof(InventoryGui).GetField("currentCraftingStation", BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
+                var craftingStation = craftingStationField?.GetValue(gui);
+                if (craftingStation != null)
+                {
+                    var m_craftItemEffectsField = craftingStation.GetType().GetField("m_craftItemEffects", BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
+                    var m_craftItemEffects = m_craftItemEffectsField?.GetValue(craftingStation);
+                    if (m_craftItemEffects != null)
+                    {
+                        var createMethod = m_craftItemEffects.GetType().GetMethod("Create", new Type[] { typeof(Vector3), typeof(Quaternion) });
+                        if (createMethod != null)
+                        {
+                            createMethod.Invoke(m_craftItemEffects, new object[] { Player.m_localPlayer.transform.position, Quaternion.identity });
+                        }
+                    }
+                }
+
+                // Add null checks and ensure you are modifying the correct item instance.
+                // Also, make sure the inventory is refreshed after modification if needed.
+
+                var craftedName = selectedRecipe.m_item?.m_itemData?.m_shared?.m_name;
+                var craftedQuality = selectedRecipe.m_item?.m_itemData?.m_quality ?? 0;
+                var craftedVariant = selectedRecipe.m_item?.m_itemData?.m_variant ?? 0;
+                int craftedCount = selectedRecipe.m_amount > 0 ? selectedRecipe.m_amount : 1;
+
+                var items = player.GetInventory()?.GetAllItems();
+                if (items != null && craftedName != null)
+                {
+                    for (int i = items.Count - 1; i >= 0 && craftedCount > 0; i--)
+                    {
+                        var item = items[i];
+                        if (item != null &&
+                            item.m_shared.m_name == craftedName &&
+                            item.m_quality == craftedQuality &&
+                            item.m_variant == craftedVariant)
+                        {
+                            int toModify = Math.Min(item.m_stack, craftedCount);
+                            //                            item.m_durability = item.GetMaxDurability() * UnityEngine.Random.value;
+                            //                            item.m_customData["ChanceCraft_NoRepair"] = "1";
+                            //                            UnityEngine.Debug.LogWarning($"[ChanceCraft] Set durability of {item.m_shared.m_name} to {item.m_durability}, not repairable");
+                            craftedCount -= toModify;
+                        }
+                    }
+                    // Optionally, force inventory update:
+                    //                    player.GetInventory().Changed();
+                }
+
+                RemoveRequiredResources(gui, player, selectedRecipe, true);
+
+                UnityEngine.Debug.LogWarning("[chancecraft] removed materials ok ...");
+
+                return null; // Crafting succeeds
+            }
+            else
+            {
+                // Remove all resources
+                UnityEngine.Debug.LogWarning("[chancecraft] failed");
+
+                RemoveRequiredResources(gui, player, selectedRecipe, false);
+
+                // Show red message
+                player.Message(MessageHud.MessageType.Center, "<color=red>Crafting failed!</color>");
+                return selectedRecipe;
+            }
+        }
+
+        // helper: detect upgrade operation robustly at Postfix time
+        private static bool IsUpgradeOperation(InventoryGui gui, Recipe recipe)
+        {
+            if (recipe == null || gui == null) return false;
+
+            // 1) check InventoryGui.m_craftUpgrade if present
+            try
+            {
+                var craftUpgradeField = typeof(InventoryGui).GetField("m_craftUpgrade", BindingFlags.Instance | BindingFlags.NonPublic);
+                if (craftUpgradeField != null)
+                {
+                    object cv = craftUpgradeField.GetValue(gui);
+                    if (cv is int v && v > 1)
+                    {
+                        return true;
+                    }
+                }
+            }
+            catch
+            {
+                // ignore read error and continue to inventory-based detection
+            }
+
+            // 2) inventory-based detection: if player has a lower-quality item with same name, treat as upgrade
+            try
+            {
+                var craftedName = recipe.m_item?.m_itemData?.m_shared?.m_name;
+                int craftedQuality = recipe.m_item?.m_itemData?.m_quality ?? 0;
+                var localPlayer = Player.m_localPlayer;
+                if (!string.IsNullOrEmpty(craftedName) && craftedQuality > 0 && localPlayer != null)
+                {
+                    var inv = localPlayer.GetInventory();
+                    if (inv != null)
+                    {
+                        foreach (var it in inv.GetAllItems())
+                        {
+                            if (it == null || it.m_shared == null) continue;
+                            if (it.m_shared.m_name == craftedName && it.m_quality < craftedQuality)
+                            {
+                                // Found existing lower-quality item -> likely an upgrade attempt
+                                return true;
+                            }
+                        }
+                    }
+                }
+            }
+            catch
+            {
+                // ignore
+            }
+
+            return false;
         }
 
         public static void RemoveRequiredResources(InventoryGui gui, Player player, Recipe selectedRecipe, Boolean crafted)
@@ -557,19 +758,19 @@ namespace ChanceCraft
             }
             // If resourceList contains multiple entries but only one valid (positive) requirement,
             // treat it as a single valid requirement on either success or failure.
-//            if ( !crafted )
-//            {
-//                var only = validReqs[0];
-//                try
-//                {
-//                    RemoveAmountFromInventory(only.name, only.amount);
-//                }
-//                catch (Exception ex)
-//                {
-//                    UnityEngine.Debug.LogWarning($"[ChanceCraft] RemoveRequiredResources single valid requirement removal failed: {ex}");
-//                }
-//                return;
-//            }
+            //            if ( !crafted )
+            //            {
+            //                var only = validReqs[0];
+            //                try
+            //                {
+            //                    RemoveAmountFromInventory(only.name, only.amount);
+            //                }
+            //                catch (Exception ex)
+            //                {
+            //                    UnityEngine.Debug.LogWarning($"[ChanceCraft] RemoveRequiredResources single valid requirement removal failed: {ex}");
+            //                }
+            //                return;
+            //            }
             // --- END SINGLE-RESOURCE HANDLING ---
 
             // If crafting failed: remove all required resources EXCEPT one random resource.
@@ -635,299 +836,5 @@ namespace ChanceCraft
                 }
             }
         }
-
-        /*
-                public static bool IsChanceCraftRepairable(ItemDrop.ItemData item)
-                {
-                    if (item == null) return false;
-        //            if (item.m_customData != null && item.m_customData.TryGetValue("ChanceCraft_NoRepair", out var val) && val == "1")
-        //                return true;
-                    // Fallback to original logic if needed, or return true if you want all other items to be repairable
-                    return false;
-                }
-        */
-
-        /*
-                [HarmonyPatch(typeof(InventoryGui), "UpdateRepair")]
-                public static class InventoryGui_UpdateRepair_Patch
-                {
-                    static void Postfix(InventoryGui __instance)
-                    {
-                        var player = Player.m_localPlayer;
-                        if (player == null) return;
-                        var inventory = player.GetInventory();
-                        if (inventory == null) return;
-
-                        foreach (var item in inventory.GetAllItems())
-                        {
-                            if (ChanceCraft.IsChanceCraftRepairable(item) )
-                            {
-                                item.m_shared.m_canBeReparied = false;
-                            }
-                        }
-                    }
-                }
-        */
-        // Replace signature and the initial selection logic with this:
-        public static Recipe TrySpawnCraftEffect(InventoryGui gui, Recipe forcedRecipe = null)
-        {
-            Recipe selectedRecipe = forcedRecipe;
-
-            if (selectedRecipe == null)
-            {
-                var selectedRecipeField = typeof(InventoryGui).GetField("m_selectedRecipe", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-                if (selectedRecipeField != null)
-                {
-                    object value = selectedRecipeField.GetValue(gui);
-                    if (value != null && value.GetType().Name == "RecipeDataPair")
-                    {
-                        var recipeProp = value.GetType().GetProperty("Recipe", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-                        if (recipeProp != null)
-                            selectedRecipe = recipeProp.GetValue(value) as Recipe;
-                    }
-                    else
-                    {
-                        selectedRecipe = value as Recipe;
-                    }
-                }
-            }
-
-            if (selectedRecipe == null || Player.m_localPlayer == null)
-                return null;
-
-            // --- Only apply to weapons, armors, and arrows ---
-            var itemType = selectedRecipe.m_item?.m_itemData?.m_shared?.m_itemType;
-            if (itemType != ItemDrop.ItemData.ItemType.OneHandedWeapon &&
-                itemType != ItemDrop.ItemData.ItemType.TwoHandedWeapon &&
-                itemType != ItemDrop.ItemData.ItemType.Bow &&
-                itemType != ItemDrop.ItemData.ItemType.TwoHandedWeaponLeft &&
-                itemType != ItemDrop.ItemData.ItemType.Shield &&
-                itemType != ItemDrop.ItemData.ItemType.Helmet &&
-                itemType != ItemDrop.ItemData.ItemType.Chest &&
-                itemType != ItemDrop.ItemData.ItemType.Legs &&
-                itemType != ItemDrop.ItemData.ItemType.Ammo)
-            {
-                UnityEngine.Debug.LogWarning("[ChanceCraft] Item type not eligible for TrySpawnCraftEffect.");
-                return null;
-            }
-            // -------------------------------------------------
-
-            UnityEngine.Debug.LogWarning("[chancecraft] berore rand");
-            float rand = UnityEngine.Random.value;
-            var player = Player.m_localPlayer;
-
-            UnityEngine.Debug.LogWarning($"[chancecraft] successChance.Value = {rand}");
-            // Determine the correct success chance based on item type
-            float chance = 0.6f; // default fallback
-            if (itemType == ItemDrop.ItemData.ItemType.OneHandedWeapon ||
-                itemType == ItemDrop.ItemData.ItemType.TwoHandedWeapon ||
-                itemType == ItemDrop.ItemData.ItemType.Bow ||
-                itemType == ItemDrop.ItemData.ItemType.TwoHandedWeaponLeft)
-            {
-                chance = weaponSuccessChance.Value;
-            }
-            else if (itemType == ItemDrop.ItemData.ItemType.Shield ||
-                     itemType == ItemDrop.ItemData.ItemType.Helmet ||
-                     itemType == ItemDrop.ItemData.ItemType.Chest ||
-                     itemType == ItemDrop.ItemData.ItemType.Legs)
-            {
-                chance = armorSuccessChance.Value;
-            }
-            else if (itemType == ItemDrop.ItemData.ItemType.Ammo)
-            {
-                chance = arrowSuccessChance.Value;
-            }
-
-            if (UnityEngine.Random.value <= chance)
-            {
-                UnityEngine.Debug.LogWarning("[chancecraft] povedlo se");
-                // Success: spawn crafting effect at player position using Create(pos, rot)
-                var craftingStationField = typeof(InventoryGui).GetField("currentCraftingStation", BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
-                var craftingStation = craftingStationField?.GetValue(gui);
-                if (craftingStation != null)
-                {
-                    var m_craftItemEffectsField = craftingStation.GetType().GetField("m_craftItemEffects", BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
-                    var m_craftItemEffects = m_craftItemEffectsField?.GetValue(craftingStation);
-                    if (m_craftItemEffects != null)
-                    {
-                        var createMethod = m_craftItemEffects.GetType().GetMethod("Create", new Type[] { typeof(Vector3), typeof(Quaternion) });
-                        if (createMethod != null)
-                        {
-                            createMethod.Invoke(m_craftItemEffects, new object[] { Player.m_localPlayer.transform.position, Quaternion.identity });
-                        }
-                    }
-                }
-
-                // Add null checks and ensure you are modifying the correct item instance.
-                // Also, make sure the inventory is refreshed after modification if needed.
-
-                var craftedName = selectedRecipe.m_item?.m_itemData?.m_shared?.m_name;
-                var craftedQuality = selectedRecipe.m_item?.m_itemData?.m_quality ?? 0;
-                var craftedVariant = selectedRecipe.m_item?.m_itemData?.m_variant ?? 0;
-                int craftedCount = selectedRecipe.m_amount > 0 ? selectedRecipe.m_amount : 1;
-
-                var items = player.GetInventory()?.GetAllItems();
-                if (items != null && craftedName != null)
-                {
-                    for (int i = items.Count - 1; i >= 0 && craftedCount > 0; i--)
-                    {
-                        var item = items[i];
-                        if (item != null &&
-                            item.m_shared.m_name == craftedName &&
-                            item.m_quality == craftedQuality &&
-                            item.m_variant == craftedVariant)
-                        {
-                            int toModify = Math.Min(item.m_stack, craftedCount);
-//                            item.m_durability = item.GetMaxDurability() * UnityEngine.Random.value;
-//                            item.m_customData["ChanceCraft_NoRepair"] = "1";
-//                            UnityEngine.Debug.LogWarning($"[ChanceCraft] Set durability of {item.m_shared.m_name} to {item.m_durability}, not repairable");
-                            craftedCount -= toModify;
-                        }
-                    }
-                    // Optionally, force inventory update:
-//                    player.GetInventory().Changed();
-                }
-
-                RemoveRequiredResources(gui, player, selectedRecipe, true);
-
-                UnityEngine.Debug.LogWarning("[chancecraft] removed materials ok ...");
-
-                return null; // Crafting succeeds
-            }
-            else
-            {
-                // Remove all resources
-                UnityEngine.Debug.LogWarning("[chancecraft] failed");
-
-                RemoveRequiredResources(gui, player, selectedRecipe, false);
-
-                // Show red message
-                player.Message(MessageHud.MessageType.Center, "<color=red>Crafting failed!</color>");
-                return selectedRecipe;
-            }
-        }
-
-        //[HarmonyPatch(typeof(InventoryGui), "Craft")]
-        //[HarmonyPostfix]
-        //private static void Craft_Postfix(InventoryGui __instance)
-        //{
-        //    UnityEngine.Debug.LogWarning("[ChanceCraft] Craft_Postfix called!");
-
-        //    var selectedRecipeField = typeof(InventoryGui).GetField("m_selectedRecipe", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
-        //    var selectedRecipe = selectedRecipeField?.GetValue(__instance) as Recipe;
-
-        //    if (selectedRecipe == null || Player.m_localPlayer == null)
-        //        return;
-
-        //    // Only apply to weapons and armor (including modded)
-        //    var item = selectedRecipe.m_item;
-        //    if (item == null || !(item.m_itemData.m_shared.m_itemType == ItemDrop.ItemData.ItemType.Shield ||
-        //                          item.m_itemData.m_shared.m_itemType == ItemDrop.ItemData.ItemType.Helmet ||
-        //                          item.m_itemData.m_shared.m_itemType == ItemDrop.ItemData.ItemType.Chest ||
-        //                          item.m_itemData.m_shared.m_itemType == ItemDrop.ItemData.ItemType.Legs))
-        //        return;
-
-        //    float rand = UnityEngine.Random.value;
-        //    UnityEngine.Debug.LogWarning($"[chancecraft] successChance.Value = {successChance?.Value}");
-        //    if (rand <= successChance.Value)
-        //    {
-        //        UnityEngine.Debug.LogWarning("[chancecraft] povedlo se");
-        //        // Success: spawn crafting effect at player position
-        //        var craftingStationField = typeof(InventoryGui).GetField("currentCraftingStation", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public);
-        //        var craftingStation = craftingStationField?.GetValue(__instance);
-        //        if (craftingStation != null)
-        //        {
-        //            var m_craftItemEffectsField = craftingStation.GetType().GetField("m_craftItemEffects", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public);
-        //            var m_craftItemEffects = m_craftItemEffectsField?.GetValue(craftingStation);
-        //            if (m_craftItemEffects != null)
-        //            {
-        //                var createMethod = m_craftItemEffects.GetType().GetMethod("Create", new Type[] { typeof(Vector3), typeof(Quaternion), typeof(Transform), typeof(float), typeof(int) });
-        //                if (createMethod != null)
-        //                {
-        //                    createMethod.Invoke(m_craftItemEffects, new object[] { Player.m_localPlayer.transform.position, Quaternion.identity, null, 1f, -1 });
-        //                }
-        //            }
-        //        }
-        //        return; // Crafting succeeds
-        //    }
-        //    else
-        //    {
-        //        // Remove all resources
-        //        UnityEngine.Debug.LogWarning("[chancecraft] failed");
-        //        var player = Player.m_localPlayer;
-        //        foreach (var req in selectedRecipe.m_resources)
-        //        {
-        //            var craftUpgradeField = typeof(InventoryGui).GetField("m_craftUpgrade", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
-        //            int craftUpgrade = 1;
-        //            if (craftUpgradeField != null)
-        //            {
-        //                object value = craftUpgradeField.GetValue(__instance);
-        //                if (value is int q && q > 1)
-        //                    craftUpgrade = q;
-        //            }
-        //            int amount = req.m_amount * ((req.m_amountPerLevel > 0 && craftUpgrade > 1) ? craftUpgrade : 1);
-        //            player.GetInventory().RemoveItem(req.m_resItem.m_itemData.m_shared.m_name, amount);
-        //        }
-
-        //        // Show red message
-        //        player.Message(MessageHud.MessageType.Center, "<color=red>Crafting failed!</color>");
-        //        return;
-        //    }
-        //}
-
-        // helper: detect upgrade operation robustly at Postfix time
-        private static bool IsUpgradeOperation(InventoryGui gui, Recipe recipe)
-        {
-            if (recipe == null || gui == null) return false;
-
-            // 1) check InventoryGui.m_craftUpgrade if present
-            try
-            {
-                var craftUpgradeField = typeof(InventoryGui).GetField("m_craftUpgrade", BindingFlags.Instance | BindingFlags.NonPublic);
-                if (craftUpgradeField != null)
-                {
-                    object cv = craftUpgradeField.GetValue(gui);
-                    if (cv is int v && v > 1)
-                    {
-                        return true;
-                    }
-                }
-            }
-            catch
-            {
-                // ignore read error and continue to inventory-based detection
-            }
-
-            // 2) inventory-based detection: if player has a lower-quality item with same name, treat as upgrade
-            try
-            {
-                var craftedName = recipe.m_item?.m_itemData?.m_shared?.m_name;
-                int craftedQuality = recipe.m_item?.m_itemData?.m_quality ?? 0;
-                var localPlayer = Player.m_localPlayer;
-                if (!string.IsNullOrEmpty(craftedName) && craftedQuality > 0 && localPlayer != null)
-                {
-                    var inv = localPlayer.GetInventory();
-                    if (inv != null)
-                    {
-                        foreach (var it in inv.GetAllItems())
-                        {
-                            if (it == null || it.m_shared == null) continue;
-                            if (it.m_shared.m_name == craftedName && it.m_quality < craftedQuality)
-                            {
-                                // Found existing lower-quality item -> likely an upgrade attempt
-                                return true;
-                            }
-                        }
-                    }
-                }
-            }
-            catch
-            {
-                // ignore
-            }
-
-            return false;
-        }
-
     }
 }
