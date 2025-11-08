@@ -2287,6 +2287,9 @@ namespace ChanceCraft
 
                         //                        Debug.Log("[ChanceCraft] Postfix: scheduled UI refresher after failed upgrade (didRevertAny)");
 
+                        // after revert attempts and resource removal
+                        RevertUpgradedItemsFromSnapshot();
+
                         Player.m_localPlayer?.Message(MessageHud.MessageType.Center, "<color=red>Upgrade failed!</color>");
                     }
                     catch (Exception ex)
@@ -3953,7 +3956,194 @@ namespace ChanceCraft
             try { if (go != null) go.SetActive(true); } catch { }
         }
 
+        // Corrected helper that expects _preCraftSnapshotData to be:
+        // Dictionary<ItemDrop.ItemData, (int quality, int variant)>
+        // or any IDictionary where Value is a named tuple (int quality, int variant).
+        private static void RevertUpgradedItemsFromSnapshot()
+        {
+            try
+            {
+                var player = Player.m_localPlayer;
+                if (player == null)
+                {
+                    Debug.LogWarning("[ChanceCraft] RevertUpgradedItemsFromSnapshot: no local player.");
+                    return;
+                }
 
+                var inv = player.GetInventory();
+                if (inv == null)
+                {
+                    Debug.LogWarning("[ChanceCraft] RevertUpgradedItemsFromSnapshot: no player inventory.");
+                    return;
+                }
+
+                bool didAny = false;
+
+                // Preferred path: we have the rich snapshot (item ref -> (quality,variant))
+                if (_preCraftSnapshotData != null && _preCraftSnapshotData.Count > 0)
+                {
+                    Debug.LogWarning($"[ChanceCraft] RevertUpgradedItemsFromSnapshot: restoring from _preCraftSnapshotData ({_preCraftSnapshotData.Count} entries).");
+                    foreach (var kv in _preCraftSnapshotData.ToList())
+                    {
+                        try
+                        {
+                            var snapItem = kv.Key;
+                            var snapInfo = kv.Value; // (int quality, int variant)
+                            if (snapItem == null) continue;
+
+                            int originalQuality = snapInfo.quality;
+                            int originalVariant = snapInfo.variant;
+
+                            // If reference still points to an inventory item, revert it.
+                            if (snapItem.m_quality != originalQuality || snapItem.m_variant != originalVariant)
+                            {
+                                Debug.LogWarning($"[ChanceCraft] RevertUpgradedItemsFromSnapshot: reverting snapshot item {ItemInfo(snapItem)} -> q={originalQuality} v={originalVariant}");
+                                try
+                                {
+                                    snapItem.m_quality = originalQuality;
+                                    snapItem.m_variant = originalVariant;
+                                    didAny = true;
+                                }
+                                catch (Exception ex)
+                                {
+                                    Debug.LogWarning($"[ChanceCraft] RevertUpgradedItemsFromSnapshot: failed to set fields on snapshot-item: {ex}");
+                                }
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            Debug.LogWarning($"[ChanceCraft] RevertUpgradedItemsFromSnapshot: exception while restoring a snapshot entry: {ex}");
+                        }
+                    }
+
+                    // Defensive inventory pass using names -> min original quality from snapshot data
+                    var originalQualitiesByName = new Dictionary<string, int>(StringComparer.Ordinal);
+                    foreach (var kv in _preCraftSnapshotData)
+                    {
+                        try
+                        {
+                            var snapItem = kv.Key;
+                            var snapInfo = kv.Value;
+                            if (snapItem == null || snapItem.m_shared == null) continue;
+                            var name = snapItem.m_shared.m_name;
+                            int q = snapInfo.quality;
+                            if (!originalQualitiesByName.TryGetValue(name, out var existing) || q < existing)
+                                originalQualitiesByName[name] = q;
+                        }
+                        catch { /* ignore per-entry */ }
+                    }
+
+                    foreach (var it in inv.GetAllItems())
+                    {
+                        try
+                        {
+                            if (it == null || it.m_shared == null) continue;
+                            if (!originalQualitiesByName.TryGetValue(it.m_shared.m_name, out var origQ)) continue;
+
+                            if (it.m_quality > origQ)
+                            {
+                                Debug.LogWarning($"[ChanceCraft] RevertUpgradedItemsFromSnapshot: defensive revert inventory item {ItemInfo(it)} from q={it.m_quality} -> q={origQ}");
+                                it.m_quality = origQ;
+                                it.m_variant = 0;
+                                didAny = true;
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            Debug.LogWarning($"[ChanceCraft] RevertUpgradedItemsFromSnapshot: exception while scanning inventory: {ex}");
+                        }
+                    }
+                }
+                // Fallback path: rich snapshot was cleared; use hash->quality map if available
+                else if (_preCraftSnapshotHashQuality != null && _preCraftSnapshotHashQuality.Count > 0)
+                {
+                    Debug.LogWarning($"[ChanceCraft] RevertUpgradedItemsFromSnapshot: _preCraftSnapshotData missing — falling back to _preCraftSnapshotHashQuality ({_preCraftSnapshotHashQuality.Count} entries).");
+                    foreach (var it in inv.GetAllItems())
+                    {
+                        try
+                        {
+                            if (it == null || it.m_shared == null) continue;
+                            int h = System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(it);
+                            if (_preCraftSnapshotHashQuality.TryGetValue(h, out int prevQ))
+                            {
+                                if (it.m_quality > prevQ)
+                                {
+                                    Debug.LogWarning($"[ChanceCraft] RevertUpgradedItemsFromSnapshot: hash-map revert: item {ItemInfo(it)} (hash={h:X8}) curQ={it.m_quality} -> prevQ={prevQ}");
+                                    it.m_quality = prevQ;
+                                    // variant information not available in hash map; set fallback
+                                    it.m_variant = 0;
+                                    didAny = true;
+                                }
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            Debug.LogWarning($"[ChanceCraft] RevertUpgradedItemsFromSnapshot: exception during hash-map revert: {ex}");
+                        }
+                    }
+                }
+                else
+                {
+                    Debug.LogWarning("[ChanceCraft] RevertUpgradedItemsFromSnapshot: no snapshot data to restore (both rich snapshot and hash-quality map are null/empty).");
+                }
+
+                // Refresh player's equipment/visuals if we changed anything
+                if (didAny)
+                {
+                    try
+                    {
+                        var playerType = player.GetType();
+                        var method = playerType.GetMethod("UpdateEquipment", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                        if (method != null)
+                        {
+                            try { method.Invoke(player, null); } catch { }
+                        }
+                        else
+                        {
+                            var tryMethod = playerType.GetMethod("UpdateEquippedItems", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                            if (tryMethod != null)
+                            {
+                                try { tryMethod.Invoke(player, null); } catch { }
+                            }
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Debug.LogWarning($"[ChanceCraft] RevertUpgradedItemsFromSnapshot: failed to refresh player equipment: {ex}");
+                    }
+
+                    // Ensure UI reflects corrected values
+                    try
+                    {
+                        ChanceCraftUIRefreshUsage.RefreshCraftingUiAfterChange();
+                        Debug.Log("[ChanceCraft] RevertUpgradedItemsFromSnapshot: invoked RefreshCraftingUiAfterChange after revert.");
+                    }
+                    catch (Exception ex)
+                    {
+                        Debug.LogWarning($"[ChanceCraft] RevertUpgradedItemsFromSnapshot: GUI update failed: {ex}");
+                    }
+                }
+
+                // Clear snapshot state so we don't try to reuse it later
+                try
+                {
+                    lock (typeof(ChanceCraftPlugin))
+                    {
+                        _preCraftSnapshot = null;
+                        _preCraftSnapshotData = null;
+                        _snapshotRecipe = null;
+                        _preCraftSnapshotHashQuality = null;
+                        _upgradeTargetItemIndex = -1;
+                        _preCraftSnapshotHashQuality = null;
+                    }
+                }
+                catch { /* ignore */ }
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning($"[ChanceCraft] RevertUpgradedItemsFromSnapshot: unexpected exception: {ex}");
+            }
+        }
 
     }
 }

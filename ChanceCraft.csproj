@@ -33,7 +33,9 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="ChanceCraft.cs" />
+    <Compile Include="ChanceCraftUIRefreshUsage.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
+    <Compile Include="UIRemoteRefresher.cs" />
   </ItemGroup>
   <ItemGroup>
     <Reference Include="0Harmony">
