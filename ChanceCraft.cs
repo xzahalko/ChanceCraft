@@ -1,8 +1,13 @@
-﻿// Full patched ChanceCraft.cs with the fixes we discussed:
-// - Only use per-level amounts for upgrade flows; normal crafting uses recipe.m_amount.
-// - Normalize GUI totals to per-level when safe (even division or explicit m_amountPerLevel).
-// - Revert in-place upgrades on RNG failure, then remove upgrade resources.
-// - Avoid DebugWarning typos, avoid variable shadowing, and keep diagnostic logs.
+﻿// Updated ChanceCraft.cs
+// Fixes:
+// - Do NOT prefer m_amountPerLevel when parsing GUI requirements for normal crafting.
+//   TryGetRequirementsFromGui now prefers m_amount (total) and falls back to m_amountPerLevel only if m_amount is missing/zero.
+// - Upgrade detection and normalization logic preserved: when GUI truly indicates an upgrade we normalize totals to per-level amounts (only when safe).
+// - On upgrade FAILURE, if the game already applied an in-place upgrade we revert the item's quality & variant (best-effort) and then remove upgrade resources.
+// - Ensure per-level amounts are applied only for upgrade flows; normal crafting always uses recipe.m_amount.
+//
+// Note: This file is the full plugin source. Replace your existing ChanceCraft.cs with this file and rebuild.
+
 using BepInEx;
 using BepInEx.Configuration;
 using HarmonyLib;
@@ -27,7 +32,7 @@ namespace ChanceCraft
 
         public const string pluginID = "deep.ChanceCraft";
         public const string pluginName = "Chance Craft";
-        public const string pluginVersion = "1.1.1";
+        public const string pluginVersion = "1.1.2";
 
         private Harmony _harmony;
         private static bool IsDoCraft;
@@ -344,6 +349,7 @@ namespace ChanceCraft
             return null;
         }
 
+        // Try to find a Recipe object embedded in wrappers
         private static bool TryExtractRecipeFromWrapper(object wrapper, Recipe excludeRecipe, out Recipe foundRecipe, out string foundPath, int maxDepth = 3)
         {
             foundRecipe = null;
@@ -352,9 +358,9 @@ namespace ChanceCraft
 
             try
             {
-                var seen = new System.Collections.Generic.HashSet<int>();
-                var q = new System.Collections.Generic.List<System.Tuple<object, string, int>>();
-                q.Add(System.Tuple.Create(wrapper, "root", 0));
+                var seen = new HashSet<int>();
+                var q = new List<Tuple<object, string, int>>();
+                q.Add(Tuple.Create(wrapper, "root", 0));
                 int qi = 0;
 
                 while (qi < q.Count)
@@ -413,7 +419,7 @@ namespace ChanceCraft
 
                             if (f.Name.IndexOf("upgrade", StringComparison.OrdinalIgnoreCase) >= 0)
                             {
-                                q.Add(System.Tuple.Create(val, $"{path}.{f.Name}", depth + 1));
+                                q.Add(Tuple.Create(val, $"{path}.{f.Name}", depth + 1));
                                 continue;
                             }
 
@@ -431,7 +437,7 @@ namespace ChanceCraft
                                         return true;
                                     }
                                     if (elem != null && idx < 5)
-                                        q.Add(System.Tuple.Create(elem, $"{path}.{f.Name}[{idx}]", depth + 1));
+                                        q.Add(Tuple.Create(elem, $"{path}.{f.Name}[{idx}]", depth + 1));
                                     idx++;
                                     if (idx > 10) break;
                                 }
@@ -439,9 +445,9 @@ namespace ChanceCraft
                             }
 
                             if (likelyWrapper || depth < maxDepth - 1)
-                                q.Add(System.Tuple.Create(val, $"{path}.{f.Name}", depth + 1));
+                                q.Add(Tuple.Create(val, $"{path}.{f.Name}", depth + 1));
                         }
-                        catch { /* ignore field access exceptions */ }
+                        catch { /* ignore */ }
                     }
 
                     foreach (var p in t.GetProperties(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic))
@@ -467,7 +473,7 @@ namespace ChanceCraft
 
                             if (p.Name.IndexOf("upgrade", StringComparison.OrdinalIgnoreCase) >= 0)
                             {
-                                q.Add(System.Tuple.Create(v, $"{path}.{p.Name}", depth + 1));
+                                q.Add(Tuple.Create(v, $"{path}.{p.Name}", depth + 1));
                                 continue;
                             }
 
@@ -485,7 +491,7 @@ namespace ChanceCraft
                                         return true;
                                     }
                                     if (elem != null && idx < 5)
-                                        q.Add(System.Tuple.Create(elem, $"{path}.{p.Name}[{idx}]", depth + 1));
+                                        q.Add(Tuple.Create(elem, $"{path}.{p.Name}[{idx}]", depth + 1));
                                     idx++;
                                     if (idx > 10) break;
                                 }
@@ -493,9 +499,9 @@ namespace ChanceCraft
                             }
 
                             if (likelyWrapper || depth < maxDepth - 1)
-                                q.Add(System.Tuple.Create(v, $"{path}.{p.Name}", depth + 1));
+                                q.Add(Tuple.Create(v, $"{path}.{p.Name}", depth + 1));
                         }
-                        catch { /* ignore property access exceptions */ }
+                        catch { /* ignore */ }
                     }
                 }
             }
@@ -652,7 +658,7 @@ namespace ChanceCraft
             return null;
         }
 
-        // Class-scope helper moved out to avoid nested-local conflicts
+        // RemoveAmountFromInventorySkippingTarget: unchanged behavior
         private static int RemoveAmountFromInventorySkippingTarget(Inventory inventory, ItemDrop.ItemData upgradeTargetItem, string resourceName, int amount)
         {
             if (inventory == null || string.IsNullOrEmpty(resourceName) || amount <= 0) return 0;
@@ -662,6 +668,7 @@ namespace ChanceCraft
 
             try
             {
+                // 1) exact token match
                 for (int i = items.Count - 1; i >= 0 && remaining > 0; i--)
                 {
                     var it = items[i];
@@ -678,6 +685,7 @@ namespace ChanceCraft
                     }
                 }
 
+                // 2) case-insensitive exact
                 for (int i = items.Count - 1; i >= 0 && remaining > 0; i--)
                 {
                     var it = items[i];
@@ -688,12 +696,10 @@ namespace ChanceCraft
                     UnityEngine.Debug.LogWarning($"[ChanceCraft] RemoveAmountFromInventorySkippingTarget: removing {toRemove} from {ItemInfo(it)} matching case-insensitive '{resourceName}'");
                     it.m_stack -= toRemove;
                     remaining -= toRemove;
-                    if (it.m_stack <= 0)
-                    {
-                        try { inventory.RemoveItem(it); } catch { }
-                    }
+                    if (it.m_stack <= 0) { try { inventory.RemoveItem(it); } catch { } }
                 }
 
+                // 3) contains
                 for (int i = items.Count - 1; i >= 0 && remaining > 0; i--)
                 {
                     var it = items[i];
@@ -706,12 +712,10 @@ namespace ChanceCraft
                     UnityEngine.Debug.LogWarning($"[ChanceCraft] RemoveAmountFromInventorySkippingTarget: removing {toRemove} from {ItemInfo(it)} containing '{resourceName}'");
                     it.m_stack -= toRemove;
                     remaining -= toRemove;
-                    if (it.m_stack <= 0)
-                    {
-                        try { inventory.RemoveItem(it); } catch { }
-                    }
+                    if (it.m_stack <= 0) { try { inventory.RemoveItem(it); } catch { } }
                 }
 
+                // 4) reverse contains
                 for (int i = items.Count - 1; i >= 0 && remaining > 0; i--)
                 {
                     var it = items[i];
@@ -724,10 +728,7 @@ namespace ChanceCraft
                     UnityEngine.Debug.LogWarning($"[ChanceCraft] RemoveAmountFromInventorySkippingTarget: removing {toRemove} from {ItemInfo(it)} reverse-containing '{resourceName}'");
                     it.m_stack -= toRemove;
                     remaining -= toRemove;
-                    if (it.m_stack <= 0)
-                    {
-                        try { inventory.RemoveItem(it); } catch { }
-                    }
+                    if (it.m_stack <= 0) { try { inventory.RemoveItem(it); } catch { } }
                 }
             }
             catch (Exception ex)
@@ -752,6 +753,7 @@ namespace ChanceCraft
             return amount - remaining;
         }
 
+        // Find best candidate upgrade recipe in ObjectDB (unchanged)
         private static Recipe FindBestUpgradeRecipeCandidate(Recipe craftRecipe)
         {
             try
@@ -781,7 +783,7 @@ namespace ChanceCraft
 
                         int total = 0;
                         bool consumesResult = false;
-                        var distinctNames = new System.Collections.Generic.HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                        var distinctNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                         foreach (var req in resourcesObj)
                         {
                             if (req == null) continue;
@@ -853,7 +855,7 @@ namespace ChanceCraft
             }
         }
 
-        // --- InventoryGui.DoCrafting patch and helpers ---
+        // InventoryGui.DoCrafting patch and helpers
         [HarmonyPatch(typeof(InventoryGui), "DoCrafting")]
         static class InventoryGuiDoCraftingPatch
         {
@@ -869,6 +871,7 @@ namespace ChanceCraft
                 _suppressedThisCall = false;
                 _savedRecipeForCall = null;
 
+                // reset upgrade/snapshot per call
                 _isUpgradeDetected = false;
                 _upgradeTargetItem = null;
                 _upgradeRecipe = null;
@@ -897,6 +900,7 @@ namespace ChanceCraft
 
                     UnityEngine.Debug.LogWarning($"[ChanceCraft] Prefix: selectedRecipe = {RecipeInfo(selectedRecipe)}");
 
+                    // Early discovery of GUI-wrapped recipe & DB candidate
                     try
                     {
                         var selKey = RecipeFingerprint(selectedRecipe);
@@ -965,11 +969,13 @@ namespace ChanceCraft
                         UnityEngine.Debug.LogWarning($"[ChanceCraft] Prefix-DBG: exception during early upgrade discovery: {ex}");
                     }
 
+                    // Save exact recipe instance for the call (so Postfix uses same object)
                     _savedRecipeForCall = selectedRecipe;
 
                     // --- GUI-provided requirements detection (treat as upgrade when GUI differs from recipe) ---
                     try
                     {
+                        // Capture upgrade target item early if possible
                         if (_upgradeTargetItem == null)
                         {
                             try
@@ -1036,14 +1042,16 @@ namespace ChanceCraft
                                 if (_upgradeTargetItem != null)
                                     UnityEngine.Debug.LogWarning($"[ChanceCraft] Prefix: captured upgrade target early: {ItemInfo(_upgradeTargetItem)}");
                             }
-                            catch { /* ignore capture exceptions */ }
+                            catch { /* ignore */ }
                         }
 
+                        // Read GUI requirement list (TryGetRequirementsFromGui now prefers m_amount total first)
                         List<(string name, int amount)> guiReqs;
                         if (TryGetRequirementsFromGui(__instance, out guiReqs) && guiReqs != null && guiReqs.Count > 0)
                         {
                             bool guiIndicatesUpgrade = false;
 
+                            // 1) explicit craft-upgrade multiplier
                             try
                             {
                                 var craftUpgradeFieldLocal = typeof(InventoryGui).GetField("m_craftUpgrade", BindingFlags.Instance | BindingFlags.NonPublic);
@@ -1061,6 +1069,7 @@ namespace ChanceCraft
                             }
                             catch { }
 
+                            // 2) captured target quality vs final quality
                             try
                             {
                                 var finalQuality = selectedRecipe.m_item?.m_itemData?.m_quality ?? 0;
@@ -1072,8 +1081,10 @@ namespace ChanceCraft
                             }
                             catch { }
 
+                            // 3) recipe consumes result
                             try { if (RecipeConsumesResult(selectedRecipe)) guiIndicatesUpgrade = true; } catch { }
 
+                            // 4) Compare GUI list to base recipe resources: if they differ, GUI likely shows upgrade costs
                             try
                             {
                                 var baseResources = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
@@ -1128,6 +1139,7 @@ namespace ChanceCraft
 
                             if (guiIndicatesUpgrade)
                             {
+                                // Normalize GUI totals to per-level amounts when safe (even division)
                                 var normalized = new List<(string name, int amount)>();
                                 int levelsToUpgrade = 1;
                                 try
@@ -1158,6 +1170,7 @@ namespace ChanceCraft
                                     int amt = g.amount;
                                     int perLevel = amt;
 
+                                    // If GUI amount likely represents totals for N levels, divide when evenly divisible by levelsToUpgrade
                                     if (levelsToUpgrade > 1 && amt > 0 && (amt % levelsToUpgrade) == 0)
                                     {
                                         perLevel = amt / levelsToUpgrade;
@@ -1165,6 +1178,7 @@ namespace ChanceCraft
                                     }
                                     else if (dbCandidate != null)
                                     {
+                                        // Try to infer per-level from DB candidate if it matches and divides GUI total
                                         try
                                         {
                                             var resourcesField2 = dbCandidate.GetType().GetField("m_resources", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
@@ -1223,8 +1237,31 @@ namespace ChanceCraft
                     {
                         UnityEngine.Debug.LogWarning($"[ChanceCraft] Prefix-DBG: exception while checking GUI requirements: {ex}");
                     }
-                    // --- end GUI requirements detection ---
+                    // --- end GUI-requirements detection ---
 
+                    // Fast-path explicit craft upgrade multiplier
+                    var craftUpgradeField = typeof(InventoryGui).GetField("m_craftUpgrade", BindingFlags.Instance | BindingFlags.NonPublic);
+                    if (craftUpgradeField != null)
+                    {
+                        try
+                        {
+                            object cv = craftUpgradeField.GetValue(__instance);
+                            if (cv is int v && v > 1)
+                            {
+                                UnityEngine.Debug.LogWarning($"[ChanceCraft] Prefix: detected explicit m_craftUpgrade={v} - treating as upgrade, skipping suppression.");
+                                _savedRecipeForCall = null;
+                                _isUpgradeDetected = true;
+                                _upgradeGuiRecipe = GetUpgradeRecipeFromGui(__instance);
+                                _upgradeRecipe = _upgradeRecipe ?? selectedRecipe;
+                                _upgradeTargetItem = GetSelectedInventoryItem(__instance);
+                                UnityEngine.Debug.LogWarning($"[ChanceCraft] Prefix: captured _upgradeGuiRecipe={RecipeInfo(_upgradeGuiRecipe)} _upgradeTargetItem={ItemInfo(_upgradeTargetItem)}");
+                                return;
+                            }
+                        }
+                        catch (Exception ex) { UnityEngine.Debug.LogWarning($"[ChanceCraft] Prefix craftUpgrade check exception: {ex}"); }
+                    }
+
+                    // Build resource list and snapshot
                     var resourcesField = selectedRecipe.GetType().GetField("m_resources", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
                     if (resourcesField == null) return;
                     var resourcesEnumerable = resourcesField.GetValue(selectedRecipe) as System.Collections.IEnumerable;
@@ -1257,6 +1294,7 @@ namespace ChanceCraft
                         try { return Convert.ToInt32(v); } catch { return 0; }
                     }
 
+                    // Snapshot existing inventory entries for crafted name
                     try
                     {
                         var craftedName = selectedRecipe.m_item?.m_itemData?.m_shared?.m_name;
@@ -1290,6 +1328,126 @@ namespace ChanceCraft
                     }
                     catch (Exception ex) { UnityEngine.Debug.LogWarning($"[ChanceCraft] Prefix snapshot exception: {ex}"); }
 
+                    // Inventory-based upgrade detection: try to capture the exact selected inventory item first
+                    try
+                    {
+                        var craftedName = selectedRecipe.m_item?.m_itemData?.m_shared?.m_name;
+                        int craftedQuality = selectedRecipe.m_item?.m_itemData?.m_quality ?? 0;
+                        var localPlayer = Player.m_localPlayer;
+
+                        var selectedInventoryItem = GetSelectedInventoryItem(__instance);
+                        UnityEngine.Debug.LogWarning($"[ChanceCraft] Prefix: selectedInventoryItem candidate = {ItemInfo(selectedInventoryItem)}");
+
+                        if (selectedInventoryItem != null &&
+                            selectedInventoryItem.m_shared != null &&
+                            !string.IsNullOrEmpty(craftedName) &&
+                            selectedInventoryItem.m_shared.m_name == craftedName &&
+                            selectedInventoryItem.m_quality < craftedQuality)
+                        {
+                            UnityEngine.Debug.LogWarning("[ChanceCraft] Prefix: exact selected inventory item detected as upgrade target.");
+                            _isUpgradeDetected = true;
+                            _upgradeTargetItem = selectedInventoryItem;
+                            _upgradeRecipe = _upgradeRecipe ?? selectedRecipe;
+                            _upgradeGuiRecipe = GetUpgradeRecipeFromGui(__instance) ?? selectedRecipe;
+                            _savedRecipeForCall = null;
+                            UnityEngine.Debug.LogWarning($"[ChanceCraft] Prefix: captured upgrade target {ItemInfo(_upgradeTargetItem)} upgradeGuiRecipe={RecipeInfo(_upgradeGuiRecipe)}");
+                            return;
+                        }
+
+                        if (!string.IsNullOrEmpty(craftedName) && craftedQuality > 0 && localPlayer != null)
+                        {
+                            var inv = localPlayer.GetInventory();
+                            if (inv != null)
+                            {
+                                ItemDrop.ItemData foundLower = null;
+                                foreach (var it in inv.GetAllItems())
+                                {
+                                    if (it == null || it.m_shared == null) continue;
+                                    if (it.m_shared.m_name == craftedName && it.m_quality < craftedQuality)
+                                    {
+                                        foundLower = it;
+                                        break;
+                                    }
+                                }
+                                if (foundLower != null)
+                                {
+                                    UnityEngine.Debug.LogWarning("[ChanceCraft] Prefix: detected lower-quality item in inventory - treating as upgrade, skipping suppression.");
+                                    _isUpgradeDetected = true;
+                                    _upgradeTargetItem = foundLower;
+                                    _upgradeRecipe = _upgradeRecipe ?? selectedRecipe;
+                                    _upgradeGuiRecipe = GetUpgradeRecipeFromGui(__instance) ?? selectedRecipe;
+                                    _savedRecipeForCall = null;
+                                    UnityEngine.Debug.LogWarning($"[ChanceCraft] Prefix: captured upgrade target {ItemInfo(foundLower)} and upgradeGuiRecipe={RecipeInfo(_upgradeGuiRecipe)}");
+                                    return;
+                                }
+                            }
+                        }
+                    }
+                    catch (Exception ex) { UnityEngine.Debug.LogWarning($"[ChanceCraft] Prefix upgrade detection exception: {ex}"); }
+
+                    // Recipe-consumes-result check
+                    try
+                    {
+                        if (RecipeConsumesResult(selectedRecipe))
+                        {
+                            UnityEngine.Debug.LogWarning("[ChanceCraft] Prefix: recipe consumes result item - treating as upgrade, skipping suppression.");
+                            _isUpgradeDetected = true;
+                            _upgradeRecipe = _upgradeRecipe ?? selectedRecipe;
+                            _upgradeGuiRecipe = GetUpgradeRecipeFromGui(__instance) ?? selectedRecipe;
+                            _savedRecipeForCall = null;
+                            UnityEngine.Debug.LogWarning($"[ChanceCraft] Prefix: captured upgradeGuiRecipe={RecipeInfo(_upgradeGuiRecipe)}");
+                            return;
+                        }
+                    }
+                    catch (Exception ex) { UnityEngine.Debug.LogWarning($"[ChanceCraft] Prefix RecipeConsumesResult exception: {ex}"); }
+
+                    // Capture GUI wrapper recipe if present
+                    try
+                    {
+                        var guiRecipe = GetUpgradeRecipeFromGui(__instance);
+                        if (guiRecipe != null)
+                        {
+                            _upgradeGuiRecipe = guiRecipe;
+                            var keyGui = RecipeFingerprint(guiRecipe);
+                            lock (_suppressedRecipeKeysLock)
+                            {
+                                _suppressedRecipeKeys.Add(keyGui);
+                            }
+                            UnityEngine.Debug.LogWarning($"[ChanceCraft] Prefix: captured GUI upgrade recipe and recorded its fingerprint: {keyGui} recipe={RecipeInfo(guiRecipe)} (ReferenceEquals to selectedRecipe={(ReferenceEquals(guiRecipe, selectedRecipe))})");
+
+                            if (ReferenceEquals(guiRecipe, selectedRecipe))
+                            {
+                                try
+                                {
+                                    var candidate = FindBestUpgradeRecipeCandidate(selectedRecipe);
+                                    if (candidate != null)
+                                    {
+                                        _upgradeRecipe = candidate;
+                                        UnityEngine.Debug.LogWarning($"[ChanceCraft] Prefix: stored ObjectDB upgrade candidate {RecipeInfo(candidate)} for later use.");
+                                        if (RecipeConsumesResult(candidate))
+                                        {
+                                            _isUpgradeDetected = true;
+                                            UnityEngine.Debug.LogWarning("[ChanceCraft] Prefix: ObjectDB candidate consumes result -> marking as upgrade-detected.");
+                                        }
+                                    }
+                                }
+                                catch (Exception ex)
+                                {
+                                    UnityEngine.Debug.LogWarning($"[ChanceCraft] Prefix: FindBestUpgradeRecipeCandidate exception: {ex}");
+                                }
+                            }
+                        }
+                        else
+                        {
+                            UnityEngine.Debug.LogWarning("[ChanceCraft] Prefix: GetUpgradeRecipeFromGui returned null -- no separate GUI upgrade recipe detected (will use selectedRecipe instance or fallback).");
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        UnityEngine.Debug.LogWarning($"[ChanceCraft] Prefix: exception attempting to capture GUI upgrade recipe: {ex}");
+                    }
+
+                    // Build validReqs (unchanged)
                     var validReqs = new List<object>();
                     foreach (var req in resourceList)
                     {
@@ -1301,6 +1459,7 @@ namespace ChanceCraft
                         validReqs.Add(req);
                     }
 
+                    // Only suppress multi-resource recipes
                     if (validReqs.Count <= 1)
                     {
                         UnityEngine.Debug.LogWarning("[ChanceCraft] Prefix: recipe has <=1 valid req -> skipping suppression.");
@@ -1325,6 +1484,7 @@ namespace ChanceCraft
                         return;
                     }
 
+                    // Save original resources for restore
                     lock (_savedResources)
                     {
                         if (!_savedResources.ContainsKey(selectedRecipe))
@@ -1345,6 +1505,7 @@ namespace ChanceCraft
                         UnityEngine.Debug.LogWarning($"[ChanceCraft] Prefix: exception recording suppressed fingerprint: {ex}");
                     }
 
+                    // Suppress live recipe resources
                     Type fieldType = resourcesField.FieldType;
                     object empty = null;
                     if (fieldType.IsArray) empty = Array.CreateInstance(fieldType.GetElementType(), 0);
@@ -1373,6 +1534,7 @@ namespace ChanceCraft
             {
                 try
                 {
+                    // Restore saved resources if needed (use exact recipe instance)
                     if (_savedRecipeForCall != null && _suppressedThisCall)
                     {
                         lock (_savedResources)
@@ -1390,6 +1552,7 @@ namespace ChanceCraft
                         }
                     }
 
+                    // If we didn't suppress, do nothing
                     if (!_suppressedThisCall)
                     {
                         _suppressedThisCall = false;
@@ -1398,6 +1561,7 @@ namespace ChanceCraft
                         return;
                     }
 
+                    // We suppressed: run chance logic for the same recipe instance
                     var recipeForLogic = _savedRecipeForCall;
                     _suppressedThisCall = false;
                     _savedRecipeForCall = null;
@@ -1405,6 +1569,7 @@ namespace ChanceCraft
 
                     try
                     {
+                        // If upgrade detected delegate to TrySpawnCraftEffect (handles both success/failure)
                         if (_isUpgradeDetected || IsUpgradeOperation(__instance, recipeForLogic))
                         {
                             UnityEngine.Debug.LogWarning("[ChanceCraft] Postfix: upgrade detected — delegating to TrySpawnCraftEffect for success/failure handling.");
@@ -1421,10 +1586,12 @@ namespace ChanceCraft
                                 if (resultFromTry != null)
                                 {
                                     UnityEngine.Debug.LogWarning("[ChanceCraft] Postfix: TrySpawnCraftEffect indicated a failed non-upgrade craft; proceeding with created-item removal.");
+                                    // fall through: continue to standard created-item removal logic below if needed.
                                 }
                                 else
                                 {
                                     UnityEngine.Debug.LogWarning("[ChanceCraft] Postfix: TrySpawnCraftEffect handled upgrade success/failure — cleanup and return.");
+                                    // cleanup and return (upgrade handled)
                                     try
                                     {
                                         if (recipeForLogic != null)
@@ -1465,6 +1632,7 @@ namespace ChanceCraft
                             }
                         }
 
+                        // Non-upgrade suppressed craft: run plugin chance-logic (this may return a Recipe to indicate a failed craft)
                         Recipe recept = ChanceCraftPlugin.TrySpawnCraftEffect(__instance, recipeForLogic);
 
                         if (player != null && recept != null)
@@ -1473,6 +1641,7 @@ namespace ChanceCraft
                             {
                                 UnityEngine.Debug.LogWarning("[ChanceCraft] Postfix: failed craft detected for multi-resource recipe — removing newly-created crafted items only.");
 
+                                // Use snapshot if it matches the recipe; otherwise null
                                 HashSet<ItemDrop.ItemData> beforeSet = null;
                                 lock (typeof(ChanceCraftPlugin))
                                 {
@@ -1485,6 +1654,7 @@ namespace ChanceCraft
                                     _snapshotRecipe = null;
                                 }
 
+                                // Remove up to recept.m_amount of crafted items, preferring items not in beforeSet.
                                 int toRemoveCount = recept.m_amount > 0 ? recept.m_amount : 1;
                                 var invItems = player.GetInventory()?.GetAllItems();
                                 UnityEngine.Debug.LogWarning($"[ChanceCraft] Postfix: attempting to remove up to {toRemoveCount} of result type {recept.m_item?.m_itemData?.m_shared?.m_name}; snapshotBeforeCount={(beforeSet?.Count ?? -1)}");
@@ -1492,6 +1662,7 @@ namespace ChanceCraft
                                 {
                                     int removedTotal = 0;
 
+                                    // First pass: remove items that match recipe and are NOT in beforeSet (newly created instances)
                                     for (int i = invItems.Count - 1; i >= 0 && toRemoveCount > 0; i--)
                                     {
                                         var item = invItems[i];
@@ -1502,6 +1673,7 @@ namespace ChanceCraft
 
                                         if (item.m_shared.m_name == craftedName && item.m_quality == craftedQuality && item.m_variant == craftedVariant)
                                         {
+                                            // Never remove the exact upgrade target item (safety)
                                             if (item == _upgradeTargetItem)
                                             {
                                                 UnityEngine.Debug.LogWarning($"[ChanceCraft] Postfix: skipping removal of upgrade target item {ItemInfo(item)}");
@@ -1527,14 +1699,17 @@ namespace ChanceCraft
                                         }
                                     }
 
+                                    // If nothing new was found and we have a snapshot, DO NOT fall back to deleting by name:
                                     if (toRemoveCount > 0)
                                     {
                                         if (beforeSet != null && removedTotal == 0)
                                         {
                                             UnityEngine.Debug.LogWarning("[ChanceCraft] Postfix: no newly-created items found (all matching items were in snapshot) — skipping fallback removal to avoid destroying pre-existing items.");
+                                            // won't remove anything further
                                         }
                                         else
                                         {
+                                            // Fallback: remove by matching name/quality/variant (legacy behavior)
                                             for (int i = invItems.Count - 1; i >= 0 && toRemoveCount > 0; i--)
                                             {
                                                 var item = invItems[i];
@@ -1586,7 +1761,7 @@ namespace ChanceCraft
             }
         }
 
-        // TrySpawnCraftEffect: RNG and resource handling
+        // TrySpawnCraftEffect - performs RNG; handles success/failure, including upgrade revert on failure
         public static Recipe TrySpawnCraftEffect(InventoryGui gui, Recipe forcedRecipe = null)
         {
             Recipe selectedRecipe = forcedRecipe;
@@ -1680,6 +1855,7 @@ namespace ChanceCraft
                     }
                 }
 
+                // Determine whether this suppressed operation should be treated as suppressed upgrade/craft
                 bool suppressedThisOperation = IsDoCraft;
                 try
                 {
@@ -1722,6 +1898,7 @@ namespace ChanceCraft
                         if (_upgradeTargetItem == null) _upgradeTargetItem = GetSelectedInventoryItem(gui);
                         UnityEngine.Debug.LogWarning($"[ChanceCraft] TrySpawnCraftEffect: upgrade success detected with suppression - removing resources using {RecipeInfo(recipeToUse)}; target={ItemInfo(_upgradeTargetItem)}");
 
+                        // If the GUI wrapper points at the base craft recipe, try ObjectDB candidate to get upgrade-specific resources.
                         if (ReferenceEquals(recipeToUse, selectedRecipe))
                         {
                             var candidate = FindBestUpgradeRecipeCandidate(selectedRecipe);
@@ -1767,8 +1944,11 @@ namespace ChanceCraft
             {
                 UnityEngine.Debug.LogWarning("[chancecraft] failed");
 
+                // If this failed attempt looks like an upgrade, remove resources using upgrade recipe if available,
+                // revert any in-place upgrade the game may have applied, and preserve the item.
                 if (IsUpgradeOperation(gui, selectedRecipe) || _isUpgradeDetected)
                 {
+                    // Detect whether the game already applied an in-place upgrade (snapshot based)
                     bool gameAlreadyHandled = false;
                     try
                     {
@@ -1779,7 +1959,7 @@ namespace ChanceCraft
                                 foreach (var kv in _preCraftSnapshotData)
                                 {
                                     var item = kv.Key;
-                                    var pre = kv.Value;
+                                    var pre = kv.Value; // (quality, variant)
                                     if (item == null || item.m_shared == null) continue;
                                     int currentQuality = item.m_quality;
                                     int currentVariant = item.m_variant;
@@ -1798,6 +1978,7 @@ namespace ChanceCraft
                         UnityEngine.Debug.LogWarning($"[ChanceCraft] TrySpawnCraftEffect: exception while checking snapshot for in-place upgrade: {ex}");
                     }
 
+                    // If the game mutated item(s) to upgraded quality, revert their quality & variant
                     if (gameAlreadyHandled)
                     {
                         try
@@ -1811,7 +1992,7 @@ namespace ChanceCraft
                                     foreach (var kv in _preCraftSnapshotData)
                                     {
                                         var item = kv.Key;
-                                        var pre = kv.Value;
+                                        var pre = kv.Value; // (quality, variant)
                                         if (item == null) continue;
                                         try
                                         {
@@ -1820,6 +2001,7 @@ namespace ChanceCraft
                                                 UnityEngine.Debug.LogWarning($"[ChanceCraft] TrySpawnCraftEffect: reverting item {ItemInfo(item)} -> q={pre.quality} v={pre.variant}");
                                                 item.m_quality = pre.quality;
                                                 item.m_variant = pre.variant;
+                                                // Best-effort: we don't call inventory UI refresh methods because they vary by version.
                                             }
                                         }
                                         catch (Exception ex)
@@ -1829,6 +2011,7 @@ namespace ChanceCraft
                                     }
                                 }
 
+                                // Clear snapshot state now that we've reverted.
                                 _preCraftSnapshot = null;
                                 _preCraftSnapshotData = null;
                                 _snapshotRecipe = null;
@@ -1840,6 +2023,7 @@ namespace ChanceCraft
                         }
                     }
 
+                    // Now remove the upgrade resources (preserve target item since we've reverted it)
                     try
                     {
                         var recipeToUse = _upgradeGuiRecipe ?? _upgradeRecipe ?? GetUpgradeRecipeFromGui(gui) ?? selectedRecipe;
@@ -1864,6 +2048,7 @@ namespace ChanceCraft
                     return null;
                 }
 
+                // Non-upgrade failure handling: check snapshot and then remove resources using normal crafting logic
                 bool gameAlreadyHandledNormal = false;
                 try
                 {
@@ -1874,7 +2059,7 @@ namespace ChanceCraft
                             foreach (var kv in _preCraftSnapshotData)
                             {
                                 var item = kv.Key;
-                                var pre = kv.Value;
+                                var pre = kv.Value; // (quality, variant)
                                 if (item == null || item.m_shared == null) continue;
 
                                 int currentQuality = item.m_quality;
@@ -1906,14 +2091,16 @@ namespace ChanceCraft
                     return null;
                 }
 
+                // Normal failed craft on suppressed/multi-resource path -> remove resources (keep-one) and return Recipe
                 RemoveRequiredResources(gui, player, selectedRecipe, false, false);
 
+                // Show red message
                 player.Message(MessageHud.MessageType.Center, "<color=red>Crafting failed!</color>");
                 return selectedRecipe;
             }
         }
 
-        // RemoveRequiredResources: use per-level only for upgrade flows; normal crafting uses base m_amount
+        // RemoveRequiredResources: compute amounts; per-level only if upgrade context
         public static void RemoveRequiredResources(InventoryGui gui, Player player, Recipe selectedRecipe, Boolean crafted, bool skipRemovingResultResource = false)
         {
             UnityEngine.Debug.LogWarning($"[ChanceCraft] RemoveRequiredResources called recipe={RecipeInfo(selectedRecipe)} crafted={crafted} skipResult={skipRemovingResultResource}");
@@ -1921,6 +2108,7 @@ namespace ChanceCraft
             var inventory = player.GetInventory();
             if (inventory == null) return;
 
+            // Preserve craft upgrade multiplier if present
             var craftUpgradeField = typeof(InventoryGui).GetField("m_craftUpgrade", BindingFlags.Instance | BindingFlags.NonPublic);
             int craftUpgrade = 1;
             if (craftUpgradeField != null)
@@ -2047,7 +2235,7 @@ namespace ChanceCraft
                 string resourceName = nameObj as string;
                 if (string.IsNullOrEmpty(resourceName)) continue;
 
-                // compute amount guarded: per-level only for upgrade flows
+                // compute amount: prefer recipe m_amount for NORMAL crafting; only use perLevel when upgrade context
                 int baseAmount = ToInt(GetMember(req, "m_amount"));
                 int perLevel = ToInt(GetMember(req, "m_amountPerLevel"));
 
@@ -2086,6 +2274,7 @@ namespace ChanceCraft
                 UnityEngine.Debug.LogWarning($"[ChanceCraft] RemoveRequiredResources: validReqsFiltered count={validReqsFiltered.Count}");
             }
 
+            // SINGLE-RESOURCE CASE
             if (validReqs.Count == 1 && resourceList.Count <= 1)
             {
                 var single = validReqs[0];
@@ -2106,6 +2295,7 @@ namespace ChanceCraft
                 return;
             }
 
+            // If crafting failed: remove all required resources EXCEPT one random resource.
             if (!crafted)
             {
                 if (validReqs.Count == 0) return;
@@ -2132,7 +2322,6 @@ namespace ChanceCraft
                         continue;
                     }
 
-                    // Find the entry in validReqs to get its computed amount
                     var match = validReqs.FirstOrDefault(v => string.Equals(v.name, resourceName, StringComparison.OrdinalIgnoreCase));
                     if (match.name == null) continue;
                     int amount = match.amount;
@@ -2158,6 +2347,7 @@ namespace ChanceCraft
                 return;
             }
 
+            // crafted == true: remove all required resources (plugin-managed)
             foreach (var req in resourceList)
             {
                 var shared = GetNested(req, "m_resItem", "m_itemData", "m_shared");
@@ -2192,7 +2382,7 @@ namespace ChanceCraft
             }
         }
 
-        // RemoveRequiredResourcesUpgrade: similar guarded per-level logic when reading recipe resources
+        // RemoveRequiredResourcesUpgrade: prefer GUI-provided normalized requirements; fallback to recipeToUse resources (guard per-level use)
         public static void RemoveRequiredResourcesUpgrade(InventoryGui gui, Player player, Recipe selectedRecipe, ItemDrop.ItemData upgradeTargetItem, bool crafted)
         {
             UnityEngine.Debug.LogWarning($"[ChanceCraft] RemoveRequiredResourcesUpgrade ENTRY: incoming selectedRecipe = {RecipeInfo(selectedRecipe)} (hash={selectedRecipe?.GetHashCode():X8}), upgradeTarget={ItemInfo(upgradeTargetItem)}, crafted={crafted}");
@@ -2200,6 +2390,7 @@ namespace ChanceCraft
             var inventory = player.GetInventory();
             if (inventory == null) return;
 
+            // If we captured GUI requirements earlier in Prefix, prefer them (already normalized)
             if (_upgradeGuiRequirements != null && _upgradeGuiRequirements.Count > 0)
             {
                 var guiReqsLocal = _upgradeGuiRequirements.ToList();
@@ -2221,6 +2412,7 @@ namespace ChanceCraft
                 return;
             }
 
+            // Try GUI-provided requirement list first (fallback)
             List<(string name, int amount)> guiReqs;
             bool haveGuiReqs = TryGetRequirementsFromGui(gui, out guiReqs);
             if (haveGuiReqs && guiReqs != null && guiReqs.Count > 0)
@@ -2233,6 +2425,7 @@ namespace ChanceCraft
                 UnityEngine.Debug.LogWarning("[ChanceCraft] RemoveRequiredResourcesUpgrade: no GUI-provided requirements found (will try ObjectDB candidate or fallback to recipe resources).");
             }
 
+            // Determine the recipe to use for fallback reading / logging
             var guiRecipeNow = GetUpgradeRecipeFromGui(gui);
             UnityEngine.Debug.LogWarning($"[ChanceCraft] RemoveRequiredResourcesUpgrade: GetUpgradeRecipeFromGui returned: {(guiRecipeNow != null ? RecipeInfo(guiRecipeNow) : "<null>")}");
             UnityEngine.Debug.LogWarning($"[ChanceCraft] RemoveRequiredResourcesUpgrade: _upgradeGuiRecipe={(_upgradeGuiRecipe != null ? RecipeInfo(_upgradeGuiRecipe) : "<null>")}, _upgradeRecipe={(_upgradeRecipe != null ? RecipeInfo(_upgradeRecipe) : "<null>")}");
@@ -2242,6 +2435,7 @@ namespace ChanceCraft
             else if (_upgradeRecipe != null) recipeToUse = _upgradeRecipe;
             UnityEngine.Debug.LogWarning($"[ChanceCraft] RemoveRequiredResourcesUpgrade: initial recipeToUse = {RecipeInfo(recipeToUse)} (hash={recipeToUse?.GetHashCode():X8})");
 
+            // If GUI had no separate list, and recipeToUse is the same as crafting recipe, attempt to find an ObjectDB candidate (upgrade recipe)
             if ((!haveGuiReqs || guiReqs == null || guiReqs.Count == 0) && ReferenceEquals(recipeToUse, selectedRecipe))
             {
                 try
@@ -2289,6 +2483,7 @@ namespace ChanceCraft
                 try { return Convert.ToInt32(v); } catch { return 0; }
             }
 
+            // Build validReqs either from GUI list or recipeToUse.m_resources
             var validReqs = new List<(object req, string name, int amount)>();
             if (haveGuiReqs && guiReqs != null && guiReqs.Count > 0)
             {
@@ -2300,14 +2495,16 @@ namespace ChanceCraft
             }
             else
             {
+                // Read recipeToUse.m_resources
                 try
                 {
                     var resourcesObj2 = GetMember(recipeToUse, "m_resources");
                     var resources2 = resourcesObj2 as System.Collections.IEnumerable;
                     if (resources2 != null)
                     {
-                        int craftUpgrade2 = 1;
+                        // preserve craftUpgrade multiplier if present
                         var craftUpgradeField2 = typeof(InventoryGui).GetField("m_craftUpgrade", BindingFlags.Instance | BindingFlags.NonPublic);
+                        int craftUpgrade2 = 1;
                         if (craftUpgradeField2 != null)
                         {
                             try
@@ -2331,6 +2528,7 @@ namespace ChanceCraft
                                 int baseAmount = ToInt(GetMember(req, "m_amount"));
                                 int perLevel = ToInt(GetMember(req, "m_amountPerLevel"));
 
+                                // Use per-level only if this is actually an upgrade context
                                 bool isUpgradeNow = _isUpgradeDetected || IsUpgradeOperation(gui, recipeToUse);
 
                                 int amount;
@@ -2363,6 +2561,7 @@ namespace ChanceCraft
                 }
             }
 
+            // Filter out result-resource (we never remove resource that equals recipe result)
             string resultName = null;
             try
             {
@@ -2378,6 +2577,7 @@ namespace ChanceCraft
                 return;
             }
 
+            // crafted == true: remove all required resources (plugin-managed)
             if (crafted)
             {
                 foreach (var req in validReqs)
@@ -2405,6 +2605,7 @@ namespace ChanceCraft
                 return;
             }
 
+            // Failure behavior (keep-one except result resource)
             if (validReqs.Count == 0)
             {
                 UnityEngine.Debug.LogWarning("[ChanceCraft] RemoveRequiredResourcesUpgrade: no valid requirements found -> nothing to remove.");
@@ -2456,7 +2657,7 @@ namespace ChanceCraft
             }
         }
 
-        // TryGetRequirementsFromGui: best-effort parse; returns GUI numbers (may be per-level or totals)
+        // TryGetRequirementsFromGui: prefer m_amount (total) and only fallback to m_amountPerLevel if m_amount missing/zero.
         private static bool TryGetRequirementsFromGui(InventoryGui gui, out List<(string name, int amount)> requirements)
         {
             requirements = null;
@@ -2483,6 +2684,7 @@ namespace ChanceCraft
                         {
                             var et = elem.GetType();
 
+                            // Resolve resource name
                             object resItem = null;
                             var fResItem = et.GetField("m_resItem", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
                             var pResItem = et.GetProperty("m_resItem", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
@@ -2509,35 +2711,36 @@ namespace ChanceCraft
                                 }
                             }
 
+                            // Prefer base m_amount first (total). Use m_amountPerLevel only as fallback.
                             int amount = 0;
-                            object amountPerLevelObj = null;
                             object amountObj = null;
-
-                            var fAmountPerLevel = et.GetField("m_amountPerLevel", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-                            var pAmountPerLevel = et.GetProperty("m_amountPerLevel", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-                            if (fAmountPerLevel != null) amountPerLevelObj = fAmountPerLevel.GetValue(elem);
-                            else if (pAmountPerLevel != null) amountPerLevelObj = pAmountPerLevel.GetValue(elem);
+                            object amountPerLevelObj = null;
 
                             var fAmount = et.GetField("m_amount", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
                             var pAmount = et.GetProperty("m_amount", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
                             if (fAmount != null) amountObj = fAmount.GetValue(elem);
                             else if (pAmount != null) amountObj = pAmount.GetValue(elem);
 
-                            if (amountPerLevelObj != null)
-                            {
-                                try { amount = Convert.ToInt32(amountPerLevelObj); } catch { amount = 0; }
-                                if (amount > 0)
-                                {
-                                    UnityEngine.Debug.LogWarning($"[ChanceCraft] TryGetRequirementsFromGui: using m_amountPerLevel for resource '{resName}' -> {amount}");
-                                }
-                            }
+                            var fAmountPerLevel = et.GetField("m_amountPerLevel", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                            var pAmountPerLevel = et.GetProperty("m_amountPerLevel", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                            if (fAmountPerLevel != null) amountPerLevelObj = fAmountPerLevel.GetValue(elem);
+                            else if (pAmountPerLevel != null) amountPerLevelObj = pAmountPerLevel.GetValue(elem);
 
-                            if (amount == 0 && amountObj != null)
+                            if (amountObj != null)
                             {
                                 try { amount = Convert.ToInt32(amountObj); } catch { amount = 0; }
                                 if (amount > 0)
                                 {
                                     UnityEngine.Debug.LogWarning($"[ChanceCraft] TryGetRequirementsFromGui: using m_amount for resource '{resName}' -> {amount}");
+                                }
+                            }
+
+                            if (amount == 0 && amountPerLevelObj != null)
+                            {
+                                try { amount = Convert.ToInt32(amountPerLevelObj); } catch { amount = 0; }
+                                if (amount > 0)
+                                {
+                                    UnityEngine.Debug.LogWarning($"[ChanceCraft] TryGetRequirementsFromGui: using m_amountPerLevel (fallback) for resource '{resName}' -> {amount}");
                                 }
                             }
 
@@ -2551,6 +2754,7 @@ namespace ChanceCraft
                     return outList;
                 }
 
+                // 0) Quick path: InventoryGui.m_reqList
                 try
                 {
                     var reqListField = tGui.GetField("m_reqList", BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
@@ -2579,6 +2783,7 @@ namespace ChanceCraft
                     UnityEngine.Debug.LogWarning($"[ChanceCraft] TryGetRequirementsFromGui: exception while reading m_reqList: {exReqList}");
                 }
 
+                // Fallback scanning of wrappers / fields / properties
                 var selectedRecipeField = tGui.GetField("m_selectedRecipe", BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
                 if (selectedRecipeField != null)
                 {
@@ -2622,6 +2827,7 @@ namespace ChanceCraft
                                 }
                             }
 
+                            // Try extracting inner Recipe and reading its m_resources
                             Recipe innerRecipe;
                             string path;
                             Recipe selectedInWrapper = null;
@@ -2653,6 +2859,7 @@ namespace ChanceCraft
                     }
                 }
 
+                // Scan InventoryGui fields/properties for enumerables — fallback
                 var fields = tGui.GetFields(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
                 foreach (var f in fields)
                 {
@@ -2706,6 +2913,7 @@ namespace ChanceCraft
             }
         }
 
+        // Diagnostic helper: dump InventoryGui structure
         private static void LogInventoryGuiStructure(InventoryGui gui, int maxItemsToShow = 6)
         {
             try
