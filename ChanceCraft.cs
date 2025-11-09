@@ -53,7 +53,7 @@ namespace ChanceCraft
         private static int _upgradeTargetItemIndex = -1;
         private static List<(string name, int amount)> _upgradeGuiRequirements;
 
-        private static bool VERBOSE_DEBUG = true; // set false when done
+        private static bool VERBOSE_DEBUG = false; // set false when done
 
         private static readonly object _savedResourcesLock = new object();
 
