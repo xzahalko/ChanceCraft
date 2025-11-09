@@ -14,6 +14,7 @@ using System.Linq;
 using System.Reflection;
 using System.Runtime.CompilerServices;
 using UnityEngine;
+using UnityEngine.UI;
 
 namespace ChanceCraft
 {
@@ -1508,6 +1509,7 @@ namespace ChanceCraft
                                     }
                                 }
                                 catch { }
+
                             }
 
                             _preCraftSnapshot = null;
@@ -1515,6 +1517,28 @@ namespace ChanceCraft
                             _snapshotRecipe = null;
                             _upgradeTargetItemIndex = -1;
                             _preCraftSnapshotHashQuality = null;
+
+                            try
+                            {
+                                // Refresh the upgrade tab inner wrapper and inventory UI so the left panel rebinds to reverted data.
+                                //                                    ForceToggleUpgradeTabRefresh(gui);
+                                ForceSimulateTabSwitchRefresh(gui);
+
+                                // Conservative refresh helpers — non-destructive
+                                try { RefreshInventoryGui(gui); } catch { }
+                                try { RefreshCraftingPanel(gui); } catch { }
+
+                                // Schedule a one-frame delayed refresh to let Valheim finish internal updates
+                                try { gui?.StartCoroutine(DelayedRefreshCraftingPanel(gui, 1)); } catch { }
+
+                                UnityEngine.Debug.LogWarning("[ChanceCraft] TrySpawnCraftEffect: performed UI refresh after revert attempts.");
+                            }
+                            catch (Exception exRefresh)
+                            {
+                                UnityEngine.Debug.LogWarning($"[ChanceCraft] TrySpawnCraftEffect: UI refresh after revert failed: {exRefresh}");
+                            }
+
+                            try { Player.m_localPlayer?.Message(MessageHud.MessageType.Center, "<color=red>Upgrade failed!</color>"); } catch { }
                         }
                         // end lock
 
@@ -1528,20 +1552,8 @@ namespace ChanceCraft
                         var upgradeTarget = _upgradeTargetItem ?? GetSelectedInventoryItem(gui);
                         RemoveRequiredResourcesUpgrade(gui, Player.m_localPlayer, recipeToUse, upgradeTarget, false);
 
-                        try
-                        {
-                            RefreshInventoryGui(gui);
-                            RefreshCraftingPanel(gui);
-                            DumpInventoryGuiStructure(gui);
-                            ForceSimulateTabSwitchRefresh_Deep(gui); // <- more aggressive refresh
-                            gui?.StartCoroutine(DelayedRefreshCraftingPanel(gui, 1));
-                        }
-                        catch { }
-
                     }
                     catch { }
-
-                    try { Player.m_localPlayer?.Message(MessageHud.MessageType.Center, "<color=red>Upgrade failed!</color>"); } catch { }
 
                     return null;
                 }
@@ -2296,311 +2308,312 @@ namespace ChanceCraft
             }
         }
 
-        private static IEnumerator ForceSimulateTabSwitchRefresh_Finalize(InventoryGui gui)
+        public static void ForceSimulateTabSwitchRefresh(InventoryGui gui)
         {
-            if (gui == null) yield break;
-            // wait two frames so the InventoryGui's own handlers/coroutines run to completion
-            yield return null;
-            yield return null;
-
+            if (gui == null) return;
             try
             {
-                // primary refresh attempts
-                try { RefreshInventoryGui(gui); } catch { }
-                try { RefreshCraftingPanel(gui); } catch { }
-
-                // force-selected-recipe flick (null -> restore) to make InventoryGui re-evaluate the selection fully
-                try
-                {
-                    var t = gui.GetType();
-                    var selField = t.GetField("m_selectedRecipe", BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
-                    if (selField != null)
-                    {
-                        var cur = selField.GetValue(gui);
-                        selField.SetValue(gui, null);
-                        // do one more refresh to ensure the internal state sees the null
-                        try { RefreshCraftingPanel(gui); } catch { }
-                        selField.SetValue(gui, cur);
-                    }
-                }
-                catch { }
-
-                // final delayed refresh as conservative fallback
-                try { gui?.StartCoroutine(DelayedRefreshCraftingPanel(gui, 1)); } catch { }
+                // Start coroutine that does the simulated clicks
+                gui.StartCoroutine(ForceSimulateTabSwitchRefreshCoroutine(gui));
             }
             catch (Exception ex)
             {
-                LogWarning($"ForceSimulateTabSwitchRefresh_Finalize exception: {ex}");
+                UnityEngine.Debug.LogWarning($"[ChanceCraft] ForceSimulateTabSwitchRefresh: failed to start coroutine: {ex}");
+                // Fallback to prior conservative refresh
+                try { RefreshUpgradeTabInner(gui); } catch { }
             }
         }
 
-        // ForceSimulateTabSwitchRefresh_Deep - aggressive tab refresh that attempts clicks and starts a finalize coroutine
-        private static void ForceSimulateTabSwitchRefresh_Deep(InventoryGui gui)
+        public static void RefreshUpgradeTabInner(InventoryGui gui)
         {
             if (gui == null) return;
-            var t = gui.GetType();
-
             try
             {
-                // helper to execute a pointer click on a GameObject (Unity UI)
-                bool TryPointerClickOnGameObject(GameObject go)
+                var t = gui.GetType();
+
+                // 1) Try to refresh known InventoryGui update methods first (non-destructive).
+                string[] igMethods = new[]
                 {
-                    if (go == null) return false;
+                    "UpdateCraftingPanel", "UpdateRecipeList", "UpdateAvailableRecipes", "UpdateCrafting",
+                    "UpdateAvailableCrafting", "UpdateRecipes", "UpdateSelectedItem", "Refresh",
+                    "RefreshList", "RefreshRequirements", "OnOpen", "OnShow"
+                };
+                foreach (var name in igMethods)
+                {
                     try
                     {
-                        // build a dummy PointerEventData
-                        var ed = new UnityEngine.EventSystems.PointerEventData(UnityEngine.EventSystems.EventSystem.current);
-                        // call ExecuteEvents.Execute with IPointerClickHandler
-                        bool handled = UnityEngine.EventSystems.ExecuteEvents.Execute<UnityEngine.EventSystems.IPointerClickHandler>(go, ed, (handler, eventData) =>
+                        var m = t.GetMethod(name, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                        if (m != null && m.GetParameters().Length == 0)
                         {
-                            try { handler.OnPointerClick((UnityEngine.EventSystems.PointerEventData)eventData); } catch { }
-                        });
-                        if (handled) { LogInfo($"ForceSimulateTabSwitchRefresh_Deep: ExecuteEvents click on '{go.name}' succeeded"); return true; }
-
-                        // try GetComponent<Button>() and invoke onClick
-                        var btn = go.GetComponent<UnityEngine.UI.Button>();
-                        if (btn != null)
-                        {
-                            try { btn.onClick.Invoke(); LogInfo($"ForceSimulateTabSwitchRefresh_Deep: Button.onClick invoked on '{go.name}'"); } catch { }
-                            return true;
-                        }
-
-                        // try Toggle - flip value to trigger listeners
-                        var tog = go.GetComponent<UnityEngine.UI.Toggle>();
-                        if (tog != null)
-                        {
-                            try
-                            {
-                                bool orig = tog.isOn;
-                                tog.isOn = !orig;
-                                tog.isOn = orig;
-                                LogInfo($"ForceSimulateTabSwitchRefresh_Deep: toggled Toggle '{go.name}'");
-                            }
-                            catch { }
-                            return true;
+                            try { m.Invoke(gui, null); UnityEngine.Debug.LogWarning($"[ChanceCraft] RefreshUpgradeTabInner: invoked InventoryGui.{name}()"); } catch { }
                         }
                     }
-                    catch (Exception ex)
-                    {
-                        LogWarning("TryPointerClickOnGameObject failed: " + ex);
-                    }
-                    return false;
+                    catch { /* ignore */ }
                 }
 
-                // Strategy A: search the GUI GameObject tree for Buttons/Toggles/Selectable with text containing "upgrade"
-                GameObject root = (gui as Component)?.gameObject;
-                if (root != null)
+                // 2) If InventoryGui holds a wrapper in m_selectedRecipe or similar, try to refresh it
+                FieldInfo selField = t.GetField("m_selectedRecipe", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+                                   ?? t.GetField("m_upgradeRecipe", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+                                   ?? t.GetField("m_selectedUpgradeRecipe", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+
+                object wrapper = null;
+                if (selField != null)
                 {
-                    // collect candidate GameObjects (search depth-first, small limit)
-                    var list = new List<UnityEngine.Transform>();
-                    list.Add(root.transform);
-                    int nodesVisited = 0;
-                    int qi = 0;
-
-                    while (qi < list.Count && nodesVisited < 1000)
-                    {
-                        var tr = list[qi++];
-                        nodesVisited++;
-                        // Check this transform
-                        try
-                        {
-                            var go = tr.gameObject;
-                            // check Text component on this GO or children
-                            var txt = go.GetComponentInChildren<UnityEngine.UI.Text>(true);
-                            string txtVal = txt?.text ?? "";
-                            string nameLow = (go.name ?? "").ToLowerInvariant();
-                            string txtLow = (txtVal ?? "").ToLowerInvariant();
-
-                            // look for tab labels: upgrade, upgrades, upgrade tab, craft, recipes
-                            if (nameLow.Contains("upgrade") || txtLow.Contains("upgrade") || nameLow.Contains("upgrades") || txtLow.Contains("upgrades") || (nameLow.Contains("tab") && txtLow.Contains("upgrade")))
-                            {
-                                if (TryPointerClickOnGameObject(go))
-                                {
-                                    try
-                                    {
-                                        var mb = gui as MonoBehaviour;
-                                        if (mb != null) mb.StartCoroutine(ForceSimulateTabSwitchRefresh_Finalize(gui));
-                                        else Player.m_localPlayer?.StartCoroutine(ForceSimulateTabSwitchRefresh_Finalize(gui));
-                                    }
-                                    catch { }
-                                    return;
-                                }
-                            }
-
-                            // also try if it has a Button or Toggle
-                            if (go.GetComponent<UnityEngine.UI.Button>() != null || go.GetComponent<UnityEngine.UI.Toggle>() != null)
-                            {
-                                // prefer elements whose text contains "upgrade" but try others if none matched
-                                if (txtLow.Length > 0 && (txtLow.Contains("upgrade") || txtLow.Contains("upgrades") || txtLow.Contains("craft") || txtLow.Contains("recipes")))
-                                {
-                                    if (TryPointerClickOnGameObject(go))
-                                    {
-                                        try
-                                        {
-                                            var mb = gui as MonoBehaviour;
-                                            if (mb != null) mb.StartCoroutine(ForceSimulateTabSwitchRefresh_Finalize(gui));
-                                            else Player.m_localPlayer?.StartCoroutine(ForceSimulateTabSwitchRefresh_Finalize(gui));
-                                        }
-                                        catch { }
-                                        return;
-                                    }
-                                }
-                            }
-                        }
-                        catch { }
-
-                        // enqueue children
-                        for (int i = 0; i < tr.childCount; i++)
-                        {
-                            var child = tr.GetChild(i);
-                            list.Add(child);
-                        }
-                    }
-                    LogInfo("ForceSimulateTabSwitchRefresh_Deep: Strategy A scanned UI tree; none clicked by name/text");
+                    try { wrapper = selField.GetValue(gui); } catch { wrapper = null; }
                 }
                 else
                 {
-                    LogInfo("ForceSimulateTabSwitchRefresh_Deep: gui.gameObject is null; cannot scan UI tree");
+                    // Try property fallback
+                    var selProp = t.GetProperty("m_selectedRecipe", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+                                  ?? t.GetProperty("SelectedRecipe", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                    if (selProp != null && selProp.CanRead)
+                    {
+                        try { wrapper = selProp.GetValue(gui); } catch { wrapper = null; }
+                    }
                 }
 
-                // Strategy B: find fields that are lists/enumerables of tab buttons and try invoking them
-                foreach (var f in t.GetFields(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic))
+                if (wrapper != null)
                 {
-                    try
+                    var wt = wrapper.GetType();
+
+                    // Try common refresh methods on the wrapper itself
+                    string[] wrapperMethods = new[] { "Refresh", "Update", "UpdateIfNeeded", "RefreshRequirements", "RefreshList", "OnChanged", "Setup" };
+                    foreach (var name in wrapperMethods)
                     {
-                        if (typeof(System.Collections.IEnumerable).IsAssignableFrom(f.FieldType))
+                        try
                         {
-                            var col = f.GetValue(gui) as System.Collections.IEnumerable;
-                            if (col == null) continue;
-                            var elems = new System.Collections.Generic.List<object>();
-                            foreach (var e in col) elems.Add(e);
-                            if (elems.Count == 0) continue;
-                            // try first few elements
-                            for (int i = 0; i < Math.Min(6, elems.Count); i++)
+                            var m = wt.GetMethod(name, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                            if (m != null && m.GetParameters().Length == 0)
                             {
-                                var e = elems[i];
-                                // if e is GameObject or Component, get gameObject
-                                GameObject go = null;
-                                if (e is GameObject g) go = g;
-                                else if (e is Component c) go = c.gameObject;
-                                else
-                                {
-                                    var gp = e?.GetType().GetProperty("gameObject", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-                                    if (gp != null) go = gp.GetValue(e) as GameObject;
-                                }
-                                if (go != null)
-                                {
-                                    if (TryPointerClickOnGameObject(go))
-                                    {
-                                        try
-                                        {
-                                            var mb = gui as MonoBehaviour;
-                                            if (mb != null) mb.StartCoroutine(ForceSimulateTabSwitchRefresh_Finalize(gui));
-                                            else Player.m_localPlayer?.StartCoroutine(ForceSimulateTabSwitchRefresh_Finalize(gui));
-                                        }
-                                        catch { }
-                                        return;
-                                    }
-                                }
-                                else
-                                {
-                                    // try reflectively invoking onClick/onValueChanged if present
-                                    try
-                                    {
-                                        var onClickField = e?.GetType().GetField("onClick", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-                                        if (onClickField != null)
-                                        {
-                                            var oc = onClickField.GetValue(e);
-                                            oc?.GetType().GetMethod("Invoke", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)?.Invoke(oc, null);
-                                            LogInfo($"ForceSimulateTabSwitchRefresh_Deep: reflectively invoked onClick on field '{f.Name}' element[{i}]");
-                                            try
-                                            {
-                                                var mb = gui as MonoBehaviour;
-                                                if (mb != null) mb.StartCoroutine(ForceSimulateTabSwitchRefresh_Finalize(gui));
-                                                else Player.m_localPlayer?.StartCoroutine(ForceSimulateTabSwitchRefresh_Finalize(gui));
-                                            }
-                                            catch { }
-                                            return;
-                                        }
-                                        var onValField = e?.GetType().GetField("onValueChanged", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-                                        if (onValField != null)
-                                        {
-                                            var oc = onValField.GetValue(e);
-                                            oc?.GetType().GetMethod("Invoke", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)?.Invoke(oc, new object[] { true });
-                                            LogInfo($"ForceSimulateTabSwitchRefresh_Deep: reflectively invoked onValueChanged on field '{f.Name}' element[{i}]");
-                                            try
-                                            {
-                                                var mb = gui as MonoBehaviour;
-                                                if (mb != null) mb.StartCoroutine(ForceSimulateTabSwitchRefresh_Finalize(gui));
-                                                else Player.m_localPlayer?.StartCoroutine(ForceSimulateTabSwitchRefresh_Finalize(gui));
-                                            }
-                                            catch { }
-                                            return;
-                                        }
-                                    }
-                                    catch { }
-                                }
+                                try { m.Invoke(wrapper, null); UnityEngine.Debug.LogWarning($"[ChanceCraft] RefreshUpgradeTabInner: invoked wrapper.{name}()"); } catch { }
                             }
                         }
+                        catch { /* ignore per-method */ }
                     }
-                    catch { }
-                }
 
-                // Strategy C: try flipping int fields + calling candidate methods (fallback)
-                string[] intFieldNames = {
-            "m_selectedTab","m_currentTab","m_tabIndex","m_selectedCategory","m_currentCategory","m_selectedIndex","m_currentIndex"
-        };
-                foreach (var name in intFieldNames)
-                {
+                    // If wrapper exposes a Recipe property, toggle it to force rebind in the GUI
                     try
                     {
-                        var f = t.GetField(name, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-                        if (f == null || f.FieldType != typeof(int)) continue;
-                        int orig = (int)f.GetValue(gui);
-                        int alt = orig == 0 ? 1 : 0;
-                        f.SetValue(gui, alt);
-                        // call Update methods
-                        foreach (var mname in new[] { "SelectTab", "SwitchTab", "SetTab", "OnTabChanged", "UpdateCraftingPanel", "Refresh" })
+                        var rp = wt.GetProperty("Recipe", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                        if (rp != null && rp.CanRead && rp.CanWrite)
                         {
-                            var m = t.GetMethod(mname, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-                            if (m == null) continue;
                             try
                             {
-                                var ps = m.GetParameters();
-                                if (ps.Length == 1 && ps[0].ParameterType == typeof(int)) m.Invoke(gui, new object[] { alt });
-                                else if (ps.Length == 0) m.Invoke(gui, null);
+                                var val = rp.GetValue(wrapper);
+                                rp.SetValue(wrapper, null);
+                                rp.SetValue(wrapper, val);
+                                UnityEngine.Debug.LogWarning("[ChanceCraft] RefreshUpgradeTabInner: toggled wrapper.Recipe to force UI rebind");
                             }
-                            catch { }
+                            catch { /* best-effort */ }
                         }
-                        f.SetValue(gui, orig);
-                        LogInfo($"ForceSimulateTabSwitchRefresh_Deep: flipped int field {name} fallback");
-                        return;
                     }
-                    catch { }
+                    catch { /* ignore */ }
                 }
 
-                // final fallback: clear selected recipe and restore
+                // 3) Try to refresh the requirement list field(s) that InventoryGui may expose (m_reqList / m_requirements)
                 try
                 {
-                    var selField = t.GetField("m_selectedRecipe", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-                    if (selField != null)
+                    var reqField = t.GetField("m_reqList", BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public)
+                                ?? t.GetField("m_requirements", BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
+                    if (reqField != null)
                     {
-                        var cur = selField.GetValue(gui);
-                        selField.SetValue(gui, null);
-                        try { RefreshCraftingPanel(gui); } catch { }
-                        selField.SetValue(gui, cur);
-                        LogInfo("ForceSimulateTabSwitchRefresh_Deep: last-resort cleared/restored m_selectedRecipe");
-                        return;
+                        var reqObj = reqField.GetValue(gui);
+                        if (reqObj != null)
+                        {
+                            var rt = reqObj.GetType();
+                            foreach (var name in new[] { "Refresh", "Update", "UpdateIfNeeded", "OnChanged" })
+                            {
+                                try
+                                {
+                                    var m = rt.GetMethod(name, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                                    if (m != null && m.GetParameters().Length == 0)
+                                    {
+                                        try { m.Invoke(reqObj, null); UnityEngine.Debug.LogWarning($"[ChanceCraft] RefreshUpgradeTabInner: invoked reqObj.{name}()"); } catch { }
+                                    }
+                                }
+                                catch { /* ignore per-method */ }
+                            }
+                        }
                     }
                 }
-                catch { }
+                catch { /* ignore */ }
 
-                LogWarning("ForceSimulateTabSwitchRefresh_Deep: no strategy succeeded");
+                // 4) Schedule a delayed refresh next frame to let Valheim finish internal changes (safe/elegant)
+                try
+                {
+                    gui.StartCoroutine(DelayedRefreshCraftingPanel(gui, 1));
+                    UnityEngine.Debug.LogWarning("[ChanceCraft] RefreshUpgradeTabInner: scheduled DelayedRefreshCraftingPanel(gui,1)");
+                }
+                catch (Exception ex)
+                {
+                    UnityEngine.Debug.LogWarning($"[ChanceCraft] RefreshUpgradeTabInner: could not start coroutine: {ex}");
+                    // As fallback, call synchronous RefreshCraftingPanel
+                    try { RefreshCraftingPanel(gui); } catch { }
+                }
             }
             catch (Exception ex)
             {
-                LogWarning("ForceSimulateTabSwitchRefresh_Deep failed: " + ex);
+                UnityEngine.Debug.LogWarning($"[ChanceCraft] RefreshUpgradeTabInner: unexpected exception: {ex}");
             }
+        }
+
+        private static IEnumerator ForceSimulateTabSwitchRefreshCoroutine(InventoryGui gui)
+        {
+            if (gui == null) yield break;
+
+            // Small helper to get fields/properties like before
+            object TryGetMember(string name)
+            {
+                try
+                {
+                    var t = gui.GetType();
+                    var f = t.GetField(name, BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
+                    if (f != null) return f.GetValue(gui);
+                    var p = t.GetProperty(name, BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
+                    if (p != null && p.CanRead) return p.GetValue(gui);
+                }
+                catch { }
+                return null;
+            }
+
+            // Try to find an explicit tab GameObject via common names first
+            string[] tabCandidates = new[] { "m_tabUpgrade", "m_tabCraft", "m_tabCrafting", "m_tab", "m_crafting", "m_tabPanel", "m_tabs" };
+            GameObject upgradeTabGO = null;
+            foreach (var nm in tabCandidates)
+            {
+                try
+                {
+                    var val = TryGetMember(nm);
+                    if (val != null)
+                    {
+                        if (val is GameObject g) { upgradeTabGO = g; break; }
+                        if (val is Component c) { upgradeTabGO = c.gameObject; break; }
+                        if (val is System.Collections.IEnumerable en && !(val is string))
+                        {
+                            foreach (var e in en)
+                            {
+                                if (e is GameObject ge) { upgradeTabGO = ge; break; }
+                                if (e is Component ce) { upgradeTabGO = ce.gameObject; break; }
+                            }
+                            if (upgradeTabGO != null) break;
+                        }
+                    }
+                }
+                catch { }
+            }
+
+            // Fallback: find button/toggle under the InventoryGui whose name hints at "craft" or "upgrade"
+            Button backButton = null;
+            Toggle backToggle = null;
+
+            try
+            {
+                var comp = gui as Component;
+                if (upgradeTabGO != null)
+                {
+                    // If explicit GO found, search inside it for tab control
+                    backButton = upgradeTabGO.GetComponentInChildren<Button>(true);
+                    backToggle = upgradeTabGO.GetComponentInChildren<Toggle>(true);
+                }
+                else if (comp != null)
+                {
+                    // scan the InventoryGui children for named buttons/toggles
+                    var btns = comp.GetComponentsInChildren<Button>(true);
+                    var tgls = comp.GetComponentsInChildren<Toggle>(true);
+
+                    // prefer names containing 'craft'/'upgrade'/'tab'
+                    backButton = btns.FirstOrDefault(b => b.gameObject.name.IndexOf("craft", StringComparison.OrdinalIgnoreCase) >= 0
+                                                         || b.gameObject.name.IndexOf("upgrade", StringComparison.OrdinalIgnoreCase) >= 0
+                                                         || b.gameObject.name.IndexOf("tab", StringComparison.OrdinalIgnoreCase) >= 0)
+                              ?? btns.FirstOrDefault();
+                    backToggle = tgls.FirstOrDefault(t => t.gameObject.name.IndexOf("craft", StringComparison.OrdinalIgnoreCase) >= 0
+                                                         || t.gameObject.name.IndexOf("upgrade", StringComparison.OrdinalIgnoreCase) >= 0
+                                                         || t.gameObject.name.IndexOf("tab", StringComparison.OrdinalIgnoreCase) >= 0)
+                              ?? tgls.FirstOrDefault();
+                }
+            }
+            catch { /* ignore scanning errors */ }
+
+            // Now pick one "other" tab to click away to. Prefer any other Button/Toggle that is not the same as the backButton/backToggle
+            Button awayButton = null;
+            Toggle awayToggle = null;
+            try
+            {
+                var comp = gui as Component;
+                if (comp != null)
+                {
+                    var btnsAll = comp.GetComponentsInChildren<Button>(true);
+                    var tglsAll = comp.GetComponentsInChildren<Toggle>(true);
+
+                    awayButton = btnsAll.FirstOrDefault(b => b != backButton && !b.gameObject.name.Equals("Close", StringComparison.OrdinalIgnoreCase));
+                    awayToggle = tglsAll.FirstOrDefault(t => t != backToggle);
+                }
+            }
+            catch { }
+
+            // If we have nothing sensible, call the conservative refresh and exit
+            if (backButton == null && backToggle == null)
+            {
+                try { RefreshUpgradeTabInner(gui); } catch { }
+                yield break;
+            }
+
+            // Simulate: click away, wait a frame, click back, wait a frame
+            try
+            {
+                // Click away if possible
+                if (awayButton != null)
+                {
+                    try { awayButton.onClick?.Invoke(); UnityEngine.Debug.LogWarning("[ChanceCraft] ForceSimulateTabSwitch: invoked awayButton.onClick"); } catch { }
+                }
+                else if (awayToggle != null)
+                {
+                    try { awayToggle.isOn = !awayToggle.isOn; UnityEngine.Debug.LogWarning("[ChanceCraft] ForceSimulateTabSwitch: toggled awayToggle"); } catch { }
+                }
+                else
+                {
+                    // If we don't have a found away control, briefly deactivate a small candidate GO (safe fallback)
+                    try
+                    {
+                        var comp = gui as Component;
+                        var child = (comp?.transform?.childCount > 0) ? comp.transform.GetChild(0).gameObject : null;
+                        if (child != null) { child.SetActive(false); }
+                    }
+                    catch { }
+                }
+            }
+            catch (Exception ex)
+            {
+                UnityEngine.Debug.LogWarning($"[ChanceCraft] ForceSimulateTabSwitch: away-click failed: {ex}");
+            }
+
+            // wait a frame
+            yield return null;
+
+            // Now click back to upgrade tab
+            try
+            {
+                if (backButton != null)
+                {
+                    try { backButton.onClick?.Invoke(); UnityEngine.Debug.LogWarning("[ChanceCraft] ForceSimulateTabSwitch: invoked backButton.onClick"); } catch { }
+                }
+                else if (backToggle != null)
+                {
+                    try { backToggle.isOn = true; UnityEngine.Debug.LogWarning("[ChanceCraft] ForceSimulateTabSwitch: set backToggle.isOn = true"); } catch { }
+                }
+            }
+            catch (Exception ex)
+            {
+                UnityEngine.Debug.LogWarning($"[ChanceCraft] ForceSimulateTabSwitch: back-click failed: {ex}");
+            }
+
+            // Wait another frame for UI to rebind, then call conservative refresh helpers
+            yield return null;
+            try { RefreshUpgradeTabInner(gui); } catch { }
+            try { RefreshInventoryGui(gui); } catch { }
+            try { RefreshCraftingPanel(gui); } catch { }
+
+            yield break;
         }
 
         private static IEnumerator DelayedRefreshCraftingPanel(InventoryGui gui, int delayFrames = 1)
