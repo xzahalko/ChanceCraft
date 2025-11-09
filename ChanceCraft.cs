@@ -1894,7 +1894,7 @@ namespace ChanceCraft
 
             if (randVal <= chance)
             {
-                // SUCCESS path (unchanged)
+                // SUCCESS path
                 UnityEngine.Debug.LogWarning("[chancecraft] success");
                 var craftingStationField = typeof(InventoryGui).GetField("currentCraftingStation", BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
                 var craftingStation = craftingStationField?.GetValue(gui);
@@ -1979,7 +1979,7 @@ namespace ChanceCraft
                 {
                     if (suppressedThisOperation)
                     {
-                        try { RemoveRequiredResources(gui, player, selectedRecipe, true, false); } catch (Exception ex) { UnityEngine.Debug.LogWarning($"[ChanceCraft] TrySpawnCraftEffect: Exception while removing craft resources after success: {ex}"); }
+                        try { RemoveRequiredResources(gui, player, selectedRecipe, true, false); } catch (Exception ex) { UnityEngine.Debug.LogWarning($"[ChanceCraft] TrySpawnCraftEffect: Exception while removing resources for suppressed craft: {ex}"); }
                     }
                     else
                     {
@@ -1998,7 +1998,7 @@ namespace ChanceCraft
                     // diagnostic logging
                     try
                     {
-                        UnityEngine.Debug.LogWarning($"[ChanceCraft] TrySpawnCraftEffect: _upgradeTargetItem captured hash={(_upgradeTargetItem != null ? RuntimeHelpers.GetHashCode(_upgradeTargetItem).ToString("X8") : "<null>")}, ItemInfo={ItemInfo(_upgradeTargetItem)}");
+                        UnityEngine.Debug.LogWarning($"[ChanceCraft] TrySpawnCraftEffect: _upgradeTargetItem captured hash={(_upgradeTargetItem != null ? RuntimeHelpers.GetHashCode(_upgradeTargetItem).ToString("X8") : "<null>")} pre-craft-snapshot-data-count={(_preCraftSnapshotData != null ? _preCraftSnapshotData.Count.ToString() : "<null>")}");
                         if (_preCraftSnapshotData != null)
                         {
                             UnityEngine.Debug.LogWarning($"[ChanceCraft] TrySpawnCraftEffect: preCraftSnapshotData contains upgradeTargetItem? {_preCraftSnapshotData.ContainsKey(_upgradeTargetItem)}");
@@ -2006,7 +2006,7 @@ namespace ChanceCraft
                     }
                     catch { }
 
-                    // Run revert attempts unconditionally for upgrade failures (as before)
+                    // Run revert attempts unconditionally for upgrade failures
                     try
                     {
                         UnityEngine.Debug.LogWarning("[ChanceCraft] TrySpawnCraftEffect: attempting revert for failed upgrade (unconditional attempt).");
@@ -2197,7 +2197,7 @@ namespace ChanceCraft
                                                 {
                                                     if (it.m_quality > prevQ)
                                                     {
-                                                        UnityEngine.Debug.LogWarning($"[ChanceCraft] TrySpawnCraftEffect: hash-map revert: item {ItemInfo(it)} (hash={h:X8}) prevQ={prevQ} -> curQ={it.m_quality}. Reverting to {prevQ}");
+                                                        UnityEngine.Debug.LogWarning($"[ChanceCraft] TrySpawnCraftEffect: hash-map revert: item {ItemInfo(it)} (hash={h:X8}) prevQ={prevQ} -> curQ={it.m_quality}");
                                                         it.m_quality = prevQ;
                                                         try
                                                         {
@@ -2218,7 +2218,7 @@ namespace ChanceCraft
                                                         string.Equals(it.m_shared.m_name, resultName, StringComparison.OrdinalIgnoreCase) &&
                                                         it.m_quality > expectedPreQuality)
                                                     {
-                                                        UnityEngine.Debug.LogWarning($"[ChanceCraft] TrySpawnCraftEffect: hash-map new-instance revert: item {ItemInfo(it)} (hash={h:X8}) appears new+upgraded -> reverting to q={expectedPreQuality}");
+                                                        UnityEngine.Debug.LogWarning($"[ChanceCraft] TrySpawnCraftEffect: hash-map new-instance revert: item {ItemInfo(it)} (hash={h:X8}) appears new/upgraded -> setting q={expectedPreQuality}");
                                                         it.m_quality = expectedPreQuality;
                                                         didRevertAny = true;
                                                     }
@@ -2239,7 +2239,7 @@ namespace ChanceCraft
 
                             UnityEngine.Debug.LogWarning($"[ChanceCraft] TrySpawnCraftEffect: revert attempts finished, didRevertAny={didRevertAny}");
 
-                            // clear state
+                            // clear state (some fields are cleared again later as well – safe to reset here)
                             _preCraftSnapshot = null;
                             _preCraftSnapshotData = null;
                             _snapshotRecipe = null;
@@ -2267,30 +2267,94 @@ namespace ChanceCraft
                         UnityEngine.Debug.LogWarning($"[ChanceCraft] TrySpawnCraftEffect: removing upgrade resources using {RecipeInfo(recipeToUse)}; target={ItemInfo(upgradeTarget)}");
                         RemoveRequiredResourcesUpgrade(gui, Player.m_localPlayer, recipeToUse, upgradeTarget, false);
 
-                        // After resources removed, force a left-panel refresh as well (some UI shows "upgraded" until panel updates)
-                        //                        try
-                        //                        {
-                        //                            try { RefreshCraftingPanel(gui); } catch (Exception ex) { UnityEngine.Debug.LogWarning($"[ChanceCraft] TrySpawnCraftEffect: RefreshCraftingPanel(after-Remove) exception: {ex}"); }
-                        //                            try { gui?.StartCoroutine(DelayedRefreshCraftingPanel(gui, 1)); } catch { /* best-effort */ }
-                        //                        }
-                        //                        catch { }
+                        // Inline conservative revert + UI refresh (used when helper was removed)
+                        try
+                        {
+                            bool didAny = false;
 
-                        //                        Player.m_localPlayer?.Message(MessageHud.MessageType.Center, "<color=red>Upgrade failed — materials consumed, item preserved.</color>");
+                            // Inline conservative revert: only touch exact snapshot references if present
+                            if (_preCraftSnapshotData != null && _preCraftSnapshotData.Count > 0 && Player.m_localPlayer != null)
+                            {
+                                var inv = Player.m_localPlayer.GetInventory();
+                                var all = inv?.GetAllItems();
+                                foreach (var kv in _preCraftSnapshotData.ToList())
+                                {
+                                    try
+                                    {
+                                        var snapItem = kv.Key;
+                                        var snapInfo = kv.Value; // (int quality, int variant)
+                                        if (snapItem == null) continue;
 
-                        // Option A: simple, uses the helper that finds the panel and schedules refresh
+                                        if (all != null && all.Contains(snapItem))
+                                        {
+                                            int originalQuality = snapInfo.quality;
+                                            int originalVariant = snapInfo.variant;
 
-                        //                        ChanceCraftUIRefreshUsage.RefreshCraftingUiAfterChange();
+                                            if (snapItem.m_quality != originalQuality || snapItem.m_variant != originalVariant)
+                                            {
+                                                UnityEngine.Debug.LogWarning($"[ChanceCraft] InlineRevert: reverting exact snapshot item {ItemInfo(snapItem)} -> q={originalQuality} v={originalVariant}");
+                                                try
+                                                {
+                                                    snapItem.m_quality = originalQuality;
+                                                    snapItem.m_variant = originalVariant;
+                                                    didAny = true;
+                                                }
+                                                catch (Exception ex)
+                                                {
+                                                    UnityEngine.Debug.LogWarning($"[ChanceCraft] InlineRevert: failed to set snapshot fields: {ex}");
+                                                }
+                                            }
+                                        }
+                                    }
+                                    catch (Exception ex)
+                                    {
+                                        UnityEngine.Debug.LogWarning($"[ChanceCraft] InlineRevert: per-entry exception: {ex}");
+                                    }
+                                }
+                            }
+                            else
+                            {
+                                UnityEngine.Debug.LogWarning("[ChanceCraft] InlineRevert: no _preCraftSnapshotData available, skipping inline revert.");
+                            }
 
-                        // Option B: direct call if you already have the panel GameObject reference
-                        // GameObject craftingPanel = /* your cached panel root or find by name */;
-                        // UIRemoteRefresher.Instance.RefreshNextFrame(craftingPanel);
+                            try
+                            {
+                                // Insert this immediately after:
+                                // UnityEngine.Debug.LogWarning($"[ChanceCraft] TrySpawnCraftEffect: revert attempts finished, didRevertAny={didRevertAny}");
+                                // and before clearing _preCraftSnapshot/_preCraftSnapshotData/_snapshotRecipe/_preCraftSnapshotHashQuality etc.
 
-                        //                        Debug.Log("[ChanceCraft] Postfix: scheduled UI refresher after failed upgrade (didRevertAny)");
+                                try
+                                {
+                                    // Refresh the upgrade tab inner wrapper and inventory UI so the left panel rebinds to reverted data.
+//                                    ForceToggleUpgradeTabRefresh(gui);
+                                    ForceSimulateTabSwitchRefresh(gui);
 
-                        // after revert attempts and resource removal
-                        RevertUpgradedItemsFromSnapshot();
+                                    // Conservative refresh helpers — non-destructive
+                                    try { RefreshInventoryGui(gui); } catch { }
+                                    try { RefreshCraftingPanel(gui); } catch { }
 
-                        Player.m_localPlayer?.Message(MessageHud.MessageType.Center, "<color=red>Upgrade failed!</color>");
+                                    // Schedule a one-frame delayed refresh to let Valheim finish internal updates
+                                    try { gui?.StartCoroutine(DelayedRefreshCraftingPanel(gui, 1)); } catch { }
+
+                                    UnityEngine.Debug.LogWarning("[ChanceCraft] TrySpawnCraftEffect: performed UI refresh after revert attempts.");
+                                }
+                                catch (Exception exRefresh)
+                                {
+                                    UnityEngine.Debug.LogWarning($"[ChanceCraft] TrySpawnCraftEffect: UI refresh after revert failed: {exRefresh}");
+                                }
+
+                                // Notify the player
+                                try { Player.m_localPlayer?.Message(MessageHud.MessageType.Center, "<color=red>Upgrade failed!</color>"); } catch { }
+                            }
+                            catch (Exception ex)
+                            {
+                                UnityEngine.Debug.LogWarning($"[ChanceCraft] TrySpawnCraftEffect: exception while finalizing upgrade-failure revert/refresh: {ex}");
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            UnityEngine.Debug.LogWarning($"[ChanceCraft] TrySpawnCraftEffect: exception while finalizing upgrade-failure revert/refresh: {ex}");
+                        }
                     }
                     catch (Exception ex)
                     {
@@ -2318,7 +2382,7 @@ namespace ChanceCraft
                                 if (currentQuality > pre.quality && currentVariant == pre.variant)
                                 {
                                     gameAlreadyHandledNormal = true;
-                                    UnityEngine.Debug.LogWarning($"[ChanceCraft] TrySpawnCraftEffect: detected pre-snapshot item upgraded in-place: {ItemInfo(item)} -> treating as success, skipping plugin failure handling.");
+                                    UnityEngine.Debug.LogWarning($"[ChanceCraft] TrySpawnCraftEffect: detected pre-snapshot item upgraded in-place: {ItemInfo(item)} -> treating as success, skipping plugin removal");
                                     break;
                                 }
                             }
@@ -3956,193 +4020,447 @@ namespace ChanceCraft
             try { if (go != null) go.SetActive(true); } catch { }
         }
 
-        // Corrected helper that expects _preCraftSnapshotData to be:
-        // Dictionary<ItemDrop.ItemData, (int quality, int variant)>
-        // or any IDictionary where Value is a named tuple (int quality, int variant).
-        private static void RevertUpgradedItemsFromSnapshot()
+        public static void RefreshUpgradeTabInner(InventoryGui gui)
         {
+            if (gui == null) return;
             try
             {
-                var player = Player.m_localPlayer;
-                if (player == null)
+                var t = gui.GetType();
+
+                // 1) Try to refresh known InventoryGui update methods first (non-destructive).
+                string[] igMethods = new[]
                 {
-                    Debug.LogWarning("[ChanceCraft] RevertUpgradedItemsFromSnapshot: no local player.");
-                    return;
+                    "UpdateCraftingPanel", "UpdateRecipeList", "UpdateAvailableRecipes", "UpdateCrafting",
+                    "UpdateAvailableCrafting", "UpdateRecipes", "UpdateSelectedItem", "Refresh",
+                    "RefreshList", "RefreshRequirements", "OnOpen", "OnShow"
+                };
+                foreach (var name in igMethods)
+                {
+                    try
+                    {
+                        var m = t.GetMethod(name, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                        if (m != null && m.GetParameters().Length == 0)
+                        {
+                            try { m.Invoke(gui, null); UnityEngine.Debug.LogWarning($"[ChanceCraft] RefreshUpgradeTabInner: invoked InventoryGui.{name}()"); } catch { }
+                        }
+                    }
+                    catch { /* ignore */ }
                 }
 
-                var inv = player.GetInventory();
-                if (inv == null)
+                // 2) If InventoryGui holds a wrapper in m_selectedRecipe or similar, try to refresh it
+                FieldInfo selField = t.GetField("m_selectedRecipe", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+                                   ?? t.GetField("m_upgradeRecipe", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+                                   ?? t.GetField("m_selectedUpgradeRecipe", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+
+                object wrapper = null;
+                if (selField != null)
                 {
-                    Debug.LogWarning("[ChanceCraft] RevertUpgradedItemsFromSnapshot: no player inventory.");
-                    return;
-                }
-
-                bool didAny = false;
-
-                // Preferred path: we have the rich snapshot (item ref -> (quality,variant))
-                if (_preCraftSnapshotData != null && _preCraftSnapshotData.Count > 0)
-                {
-                    Debug.LogWarning($"[ChanceCraft] RevertUpgradedItemsFromSnapshot: restoring from _preCraftSnapshotData ({_preCraftSnapshotData.Count} entries).");
-                    foreach (var kv in _preCraftSnapshotData.ToList())
-                    {
-                        try
-                        {
-                            var snapItem = kv.Key;
-                            var snapInfo = kv.Value; // (int quality, int variant)
-                            if (snapItem == null) continue;
-
-                            int originalQuality = snapInfo.quality;
-                            int originalVariant = snapInfo.variant;
-
-                            // If reference still points to an inventory item, revert it.
-                            if (snapItem.m_quality != originalQuality || snapItem.m_variant != originalVariant)
-                            {
-                                Debug.LogWarning($"[ChanceCraft] RevertUpgradedItemsFromSnapshot: reverting snapshot item {ItemInfo(snapItem)} -> q={originalQuality} v={originalVariant}");
-                                try
-                                {
-                                    snapItem.m_quality = originalQuality;
-                                    snapItem.m_variant = originalVariant;
-                                    didAny = true;
-                                }
-                                catch (Exception ex)
-                                {
-                                    Debug.LogWarning($"[ChanceCraft] RevertUpgradedItemsFromSnapshot: failed to set fields on snapshot-item: {ex}");
-                                }
-                            }
-                        }
-                        catch (Exception ex)
-                        {
-                            Debug.LogWarning($"[ChanceCraft] RevertUpgradedItemsFromSnapshot: exception while restoring a snapshot entry: {ex}");
-                        }
-                    }
-
-                    // Defensive inventory pass using names -> min original quality from snapshot data
-                    var originalQualitiesByName = new Dictionary<string, int>(StringComparer.Ordinal);
-                    foreach (var kv in _preCraftSnapshotData)
-                    {
-                        try
-                        {
-                            var snapItem = kv.Key;
-                            var snapInfo = kv.Value;
-                            if (snapItem == null || snapItem.m_shared == null) continue;
-                            var name = snapItem.m_shared.m_name;
-                            int q = snapInfo.quality;
-                            if (!originalQualitiesByName.TryGetValue(name, out var existing) || q < existing)
-                                originalQualitiesByName[name] = q;
-                        }
-                        catch { /* ignore per-entry */ }
-                    }
-
-                    foreach (var it in inv.GetAllItems())
-                    {
-                        try
-                        {
-                            if (it == null || it.m_shared == null) continue;
-                            if (!originalQualitiesByName.TryGetValue(it.m_shared.m_name, out var origQ)) continue;
-
-                            if (it.m_quality > origQ)
-                            {
-                                Debug.LogWarning($"[ChanceCraft] RevertUpgradedItemsFromSnapshot: defensive revert inventory item {ItemInfo(it)} from q={it.m_quality} -> q={origQ}");
-                                it.m_quality = origQ;
-                                it.m_variant = 0;
-                                didAny = true;
-                            }
-                        }
-                        catch (Exception ex)
-                        {
-                            Debug.LogWarning($"[ChanceCraft] RevertUpgradedItemsFromSnapshot: exception while scanning inventory: {ex}");
-                        }
-                    }
-                }
-                // Fallback path: rich snapshot was cleared; use hash->quality map if available
-                else if (_preCraftSnapshotHashQuality != null && _preCraftSnapshotHashQuality.Count > 0)
-                {
-                    Debug.LogWarning($"[ChanceCraft] RevertUpgradedItemsFromSnapshot: _preCraftSnapshotData missing — falling back to _preCraftSnapshotHashQuality ({_preCraftSnapshotHashQuality.Count} entries).");
-                    foreach (var it in inv.GetAllItems())
-                    {
-                        try
-                        {
-                            if (it == null || it.m_shared == null) continue;
-                            int h = System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(it);
-                            if (_preCraftSnapshotHashQuality.TryGetValue(h, out int prevQ))
-                            {
-                                if (it.m_quality > prevQ)
-                                {
-                                    Debug.LogWarning($"[ChanceCraft] RevertUpgradedItemsFromSnapshot: hash-map revert: item {ItemInfo(it)} (hash={h:X8}) curQ={it.m_quality} -> prevQ={prevQ}");
-                                    it.m_quality = prevQ;
-                                    // variant information not available in hash map; set fallback
-                                    it.m_variant = 0;
-                                    didAny = true;
-                                }
-                            }
-                        }
-                        catch (Exception ex)
-                        {
-                            Debug.LogWarning($"[ChanceCraft] RevertUpgradedItemsFromSnapshot: exception during hash-map revert: {ex}");
-                        }
-                    }
+                    try { wrapper = selField.GetValue(gui); } catch { wrapper = null; }
                 }
                 else
                 {
-                    Debug.LogWarning("[ChanceCraft] RevertUpgradedItemsFromSnapshot: no snapshot data to restore (both rich snapshot and hash-quality map are null/empty).");
+                    // Try property fallback
+                    var selProp = t.GetProperty("m_selectedRecipe", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+                                  ?? t.GetProperty("SelectedRecipe", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                    if (selProp != null && selProp.CanRead)
+                    {
+                        try { wrapper = selProp.GetValue(gui); } catch { wrapper = null; }
+                    }
                 }
 
-                // Refresh player's equipment/visuals if we changed anything
-                if (didAny)
+                if (wrapper != null)
                 {
+                    var wt = wrapper.GetType();
+
+                    // Try common refresh methods on the wrapper itself
+                    string[] wrapperMethods = new[] { "Refresh", "Update", "UpdateIfNeeded", "RefreshRequirements", "RefreshList", "OnChanged", "Setup" };
+                    foreach (var name in wrapperMethods)
+                    {
+                        try
+                        {
+                            var m = wt.GetMethod(name, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                            if (m != null && m.GetParameters().Length == 0)
+                            {
+                                try { m.Invoke(wrapper, null); UnityEngine.Debug.LogWarning($"[ChanceCraft] RefreshUpgradeTabInner: invoked wrapper.{name}()"); } catch { }
+                            }
+                        }
+                        catch { /* ignore per-method */ }
+                    }
+
+                    // If wrapper exposes a Recipe property, toggle it to force rebind in the GUI
                     try
                     {
-                        var playerType = player.GetType();
-                        var method = playerType.GetMethod("UpdateEquipment", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-                        if (method != null)
+                        var rp = wt.GetProperty("Recipe", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                        if (rp != null && rp.CanRead && rp.CanWrite)
                         {
-                            try { method.Invoke(player, null); } catch { }
-                        }
-                        else
-                        {
-                            var tryMethod = playerType.GetMethod("UpdateEquippedItems", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-                            if (tryMethod != null)
+                            try
                             {
-                                try { tryMethod.Invoke(player, null); } catch { }
+                                var val = rp.GetValue(wrapper);
+                                rp.SetValue(wrapper, null);
+                                rp.SetValue(wrapper, val);
+                                UnityEngine.Debug.LogWarning("[ChanceCraft] RefreshUpgradeTabInner: toggled wrapper.Recipe to force UI rebind");
+                            }
+                            catch { /* best-effort */ }
+                        }
+                    }
+                    catch { /* ignore */ }
+                }
+
+                // 3) Try to refresh the requirement list field(s) that InventoryGui may expose (m_reqList / m_requirements)
+                try
+                {
+                    var reqField = t.GetField("m_reqList", BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public)
+                                ?? t.GetField("m_requirements", BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
+                    if (reqField != null)
+                    {
+                        var reqObj = reqField.GetValue(gui);
+                        if (reqObj != null)
+                        {
+                            var rt = reqObj.GetType();
+                            foreach (var name in new[] { "Refresh", "Update", "UpdateIfNeeded", "OnChanged" })
+                            {
+                                try
+                                {
+                                    var m = rt.GetMethod(name, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                                    if (m != null && m.GetParameters().Length == 0)
+                                    {
+                                        try { m.Invoke(reqObj, null); UnityEngine.Debug.LogWarning($"[ChanceCraft] RefreshUpgradeTabInner: invoked reqObj.{name}()"); } catch { }
+                                    }
+                                }
+                                catch { /* ignore per-method */ }
                             }
                         }
                     }
-                    catch (Exception ex)
-                    {
-                        Debug.LogWarning($"[ChanceCraft] RevertUpgradedItemsFromSnapshot: failed to refresh player equipment: {ex}");
-                    }
-
-                    // Ensure UI reflects corrected values
-                    try
-                    {
-                        ChanceCraftUIRefreshUsage.RefreshCraftingUiAfterChange();
-                        Debug.Log("[ChanceCraft] RevertUpgradedItemsFromSnapshot: invoked RefreshCraftingUiAfterChange after revert.");
-                    }
-                    catch (Exception ex)
-                    {
-                        Debug.LogWarning($"[ChanceCraft] RevertUpgradedItemsFromSnapshot: GUI update failed: {ex}");
-                    }
-                }
-
-                // Clear snapshot state so we don't try to reuse it later
-                try
-                {
-                    lock (typeof(ChanceCraftPlugin))
-                    {
-                        _preCraftSnapshot = null;
-                        _preCraftSnapshotData = null;
-                        _snapshotRecipe = null;
-                        _preCraftSnapshotHashQuality = null;
-                        _upgradeTargetItemIndex = -1;
-                        _preCraftSnapshotHashQuality = null;
-                    }
                 }
                 catch { /* ignore */ }
+
+                // 4) Schedule a delayed refresh next frame to let Valheim finish internal changes (safe/elegant)
+                try
+                {
+                    gui.StartCoroutine(DelayedRefreshCraftingPanel(gui, 1));
+                    UnityEngine.Debug.LogWarning("[ChanceCraft] RefreshUpgradeTabInner: scheduled DelayedRefreshCraftingPanel(gui,1)");
+                }
+                catch (Exception ex)
+                {
+                    UnityEngine.Debug.LogWarning($"[ChanceCraft] RefreshUpgradeTabInner: could not start coroutine: {ex}");
+                    // As fallback, call synchronous RefreshCraftingPanel
+                    try { RefreshCraftingPanel(gui); } catch { }
+                }
             }
             catch (Exception ex)
             {
-                Debug.LogWarning($"[ChanceCraft] RevertUpgradedItemsFromSnapshot: unexpected exception: {ex}");
+                UnityEngine.Debug.LogWarning($"[ChanceCraft] RefreshUpgradeTabInner: unexpected exception: {ex}");
             }
+        }
+
+        public static void ForceToggleUpgradeTabRefresh(InventoryGui gui)
+        {
+            if (gui == null) return;
+            try
+            {
+                var t = gui.GetType();
+                var toggled = new HashSet<GameObject>();
+                // Candidate field/property names that often reference the left/crafting/upgrade UI parts
+                string[] candidates = new[]
+                {
+                    "m_leftPanel", "m_craftingPanel", "m_recipePanel", "m_recipeList", "m_reqList",
+                    "m_upgradePanel", "m_upgradeRoot", "m_leftRoot", "m_craftPanel", "m_craftWindow",
+                    "m_playerInventory", "m_inventory", "m_playerInventoryUI", "m_reqList"
+                };
+
+                object TryGet(string name)
+                {
+                    try
+                    {
+                        var f = t.GetField(name, BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
+                        if (f != null) return f.GetValue(gui);
+                        var p = t.GetProperty(name, BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
+                        if (p != null && p.CanRead) return p.GetValue(gui);
+                    }
+                    catch { /* ignore */ }
+                    return null;
+                }
+
+                GameObject ToGameObject(object obj)
+                {
+                    if (obj == null) return null;
+                    if (obj is GameObject go) return go;
+                    if (obj is Component comp) return comp.gameObject;
+                    // If it's an enumerable, try first few elements
+                    if (obj is System.Collections.IEnumerable ie && !(obj is string))
+                    {
+                        foreach (var e in ie)
+                        {
+                            if (e == null) continue;
+                            if (e is GameObject g2) return g2;
+                            if (e is Component c2) return c2.gameObject;
+                        }
+                    }
+                    return null;
+                }
+
+                // 1) Try explicit candidate fields/properties
+                foreach (var name in candidates)
+                {
+                    try
+                    {
+                        var obj = TryGet(name);
+                        var go = ToGameObject(obj);
+                        if (go != null && !toggled.Contains(go))
+                        {
+                            toggled.Add(go);
+                            // disable now, re-enable next frame via coroutine
+                            try { go.SetActive(false); } catch { }
+                            try { gui.StartCoroutine(ReenableNextFrame(go)); } catch { }
+                            UnityEngine.Debug.LogWarning($"[ChanceCraft] ForceToggleUpgradeTabRefresh: toggled candidate '{name}' (go={go.name})");
+                            // limit toggles, don't toggle too many things
+                            if (toggled.Count >= 2) break;
+                        }
+                    }
+                    catch { /* ignore per-field errors */ }
+                }
+
+                // 2) If nothing toggled yet, fall back to scanning fields for any GameObject / Component with likely names
+                if (toggled.Count == 0)
+                {
+                    foreach (var f in t.GetFields(BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public))
+                    {
+                        try
+                        {
+                            var nm = (f.Name ?? "").ToLowerInvariant();
+                            if (nm.Contains("craft") || nm.Contains("recipe") || nm.Contains("left") || nm.Contains("upgrade") || nm.Contains("req"))
+                            {
+                                var val = f.GetValue(gui);
+                                var go = ToGameObject(val);
+                                if (go != null && !toggled.Contains(go))
+                                {
+                                    toggled.Add(go);
+                                    try { go.SetActive(false); } catch { }
+                                    try { gui.StartCoroutine(ReenableNextFrame(go)); } catch { }
+                                    UnityEngine.Debug.LogWarning($"[ChanceCraft] ForceToggleUpgradeTabRefresh: toggled field '{f.Name}' (go={go.name})");
+                                    if (toggled.Count >= 2) break;
+                                }
+                            }
+                        }
+                        catch { /* ignore per-field */ }
+                    }
+                }
+
+                // 3) As a last resort, try toggling the first two child GameObjects found under the InventoryGui component
+                if (toggled.Count == 0)
+                {
+                    try
+                    {
+                        var comp = gui as Component;
+                        var rootGo = comp?.gameObject;
+                        if (rootGo != null)
+                        {
+                            int toggledCount = 0;
+                            foreach (Transform ch in rootGo.transform)
+                            {
+                                try
+                                {
+                                    if (ch == null) continue;
+                                    var go = ch.gameObject;
+                                    if (go == null) continue;
+                                    if (go.name.ToLowerInvariant().Contains("craft") || go.name.ToLowerInvariant().Contains("recipe") || go.name.ToLowerInvariant().Contains("left") || go.name.ToLowerInvariant().Contains("upgrade"))
+                                    {
+                                        try { go.SetActive(false); } catch { }
+                                        try { gui.StartCoroutine(ReenableNextFrame(go)); } catch { }
+                                        UnityEngine.Debug.LogWarning($"[ChanceCraft] ForceToggleUpgradeTabRefresh: toggled child root '{go.name}'");
+                                        toggledCount++;
+                                        if (toggledCount >= 2) break;
+                                    }
+                                }
+                                catch { }
+                            }
+                        }
+                    }
+                    catch { /* ignore */ }
+                }
+
+                if (toggled.Count == 0)
+                    UnityEngine.Debug.LogWarning("[ChanceCraft] ForceToggleUpgradeTabRefresh: no candidate UI elements found to toggle.");
+            }
+            catch (Exception ex)
+            {
+                UnityEngine.Debug.LogWarning($"[ChanceCraft] ForceToggleUpgradeTabRefresh exception: {ex}");
+            }
+        }
+
+        public static void ForceSimulateTabSwitchRefresh(InventoryGui gui)
+        {
+            if (gui == null) return;
+            try
+            {
+                // Start coroutine that does the simulated clicks
+                gui.StartCoroutine(ForceSimulateTabSwitchRefreshCoroutine(gui));
+            }
+            catch (Exception ex)
+            {
+                UnityEngine.Debug.LogWarning($"[ChanceCraft] ForceSimulateTabSwitchRefresh: failed to start coroutine: {ex}");
+                // Fallback to prior conservative refresh
+                try { RefreshUpgradeTabInner(gui); } catch { }
+            }
+        }
+
+        private static IEnumerator ForceSimulateTabSwitchRefreshCoroutine(InventoryGui gui)
+        {
+            if (gui == null) yield break;
+
+            // Small helper to get fields/properties like before
+            object TryGetMember(string name)
+            {
+                try
+                {
+                    var t = gui.GetType();
+                    var f = t.GetField(name, BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
+                    if (f != null) return f.GetValue(gui);
+                    var p = t.GetProperty(name, BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
+                    if (p != null && p.CanRead) return p.GetValue(gui);
+                }
+                catch { }
+                return null;
+            }
+
+            // Try to find an explicit tab GameObject via common names first
+            string[] tabCandidates = new[] { "m_tabUpgrade", "m_tabCraft", "m_tabCrafting", "m_tab", "m_crafting", "m_tabPanel", "m_tabs" };
+            GameObject upgradeTabGO = null;
+            foreach (var nm in tabCandidates)
+            {
+                try
+                {
+                    var val = TryGetMember(nm);
+                    if (val != null)
+                    {
+                        if (val is GameObject g) { upgradeTabGO = g; break; }
+                        if (val is Component c) { upgradeTabGO = c.gameObject; break; }
+                        if (val is System.Collections.IEnumerable en && !(val is string))
+                        {
+                            foreach (var e in en)
+                            {
+                                if (e is GameObject ge) { upgradeTabGO = ge; break; }
+                                if (e is Component ce) { upgradeTabGO = ce.gameObject; break; }
+                            }
+                            if (upgradeTabGO != null) break;
+                        }
+                    }
+                }
+                catch { }
+            }
+
+            // Fallback: find button/toggle under the InventoryGui whose name hints at "craft" or "upgrade"
+            Button backButton = null;
+            Toggle backToggle = null;
+
+            try
+            {
+                var comp = gui as Component;
+                if (upgradeTabGO != null)
+                {
+                    // If explicit GO found, search inside it for tab control
+                    backButton = upgradeTabGO.GetComponentInChildren<Button>(true);
+                    backToggle = upgradeTabGO.GetComponentInChildren<Toggle>(true);
+                }
+                else if (comp != null)
+                {
+                    // scan the InventoryGui children for named buttons/toggles
+                    var btns = comp.GetComponentsInChildren<Button>(true);
+                    var tgls = comp.GetComponentsInChildren<Toggle>(true);
+
+                    // prefer names containing 'craft'/'upgrade'/'tab'
+                    backButton = btns.FirstOrDefault(b => b.gameObject.name.IndexOf("craft", StringComparison.OrdinalIgnoreCase) >= 0
+                                                         || b.gameObject.name.IndexOf("upgrade", StringComparison.OrdinalIgnoreCase) >= 0
+                                                         || b.gameObject.name.IndexOf("tab", StringComparison.OrdinalIgnoreCase) >= 0)
+                              ?? btns.FirstOrDefault();
+                    backToggle = tgls.FirstOrDefault(t => t.gameObject.name.IndexOf("craft", StringComparison.OrdinalIgnoreCase) >= 0
+                                                         || t.gameObject.name.IndexOf("upgrade", StringComparison.OrdinalIgnoreCase) >= 0
+                                                         || t.gameObject.name.IndexOf("tab", StringComparison.OrdinalIgnoreCase) >= 0)
+                              ?? tgls.FirstOrDefault();
+                }
+            }
+            catch { /* ignore scanning errors */ }
+
+            // Now pick one "other" tab to click away to. Prefer any other Button/Toggle that is not the same as the backButton/backToggle
+            Button awayButton = null;
+            Toggle awayToggle = null;
+            try
+            {
+                var comp = gui as Component;
+                if (comp != null)
+                {
+                    var btnsAll = comp.GetComponentsInChildren<Button>(true);
+                    var tglsAll = comp.GetComponentsInChildren<Toggle>(true);
+
+                    awayButton = btnsAll.FirstOrDefault(b => b != backButton && !b.gameObject.name.Equals("Close", StringComparison.OrdinalIgnoreCase));
+                    awayToggle = tglsAll.FirstOrDefault(t => t != backToggle);
+                }
+            }
+            catch { }
+
+            // If we have nothing sensible, call the conservative refresh and exit
+            if (backButton == null && backToggle == null)
+            {
+                try { RefreshUpgradeTabInner(gui); } catch { }
+                yield break;
+            }
+
+            // Simulate: click away, wait a frame, click back, wait a frame
+            try
+            {
+                // Click away if possible
+                if (awayButton != null)
+                {
+                    try { awayButton.onClick?.Invoke(); UnityEngine.Debug.LogWarning("[ChanceCraft] ForceSimulateTabSwitch: invoked awayButton.onClick"); } catch { }
+                }
+                else if (awayToggle != null)
+                {
+                    try { awayToggle.isOn = !awayToggle.isOn; UnityEngine.Debug.LogWarning("[ChanceCraft] ForceSimulateTabSwitch: toggled awayToggle"); } catch { }
+                }
+                else
+                {
+                    // If we don't have a found away control, briefly deactivate a small candidate GO (safe fallback)
+                    try
+                    {
+                        var comp = gui as Component;
+                        var child = (comp?.transform?.childCount > 0) ? comp.transform.GetChild(0).gameObject : null;
+                        if (child != null) { child.SetActive(false); }
+                    }
+                    catch { }
+                }
+            }
+            catch (Exception ex)
+            {
+                UnityEngine.Debug.LogWarning($"[ChanceCraft] ForceSimulateTabSwitch: away-click failed: {ex}");
+            }
+
+            // wait a frame
+            yield return null;
+
+            // Now click back to upgrade tab
+            try
+            {
+                if (backButton != null)
+                {
+                    try { backButton.onClick?.Invoke(); UnityEngine.Debug.LogWarning("[ChanceCraft] ForceSimulateTabSwitch: invoked backButton.onClick"); } catch { }
+                }
+                else if (backToggle != null)
+                {
+                    try { backToggle.isOn = true; UnityEngine.Debug.LogWarning("[ChanceCraft] ForceSimulateTabSwitch: set backToggle.isOn = true"); } catch { }
+                }
+            }
+            catch (Exception ex)
+            {
+                UnityEngine.Debug.LogWarning($"[ChanceCraft] ForceSimulateTabSwitch: back-click failed: {ex}");
+            }
+
+            // Wait another frame for UI to rebind, then call conservative refresh helpers
+            yield return null;
+            try { RefreshUpgradeTabInner(gui); } catch { }
+            try { RefreshInventoryGui(gui); } catch { }
+            try { RefreshCraftingPanel(gui); } catch { }
+
+            yield break;
         }
 
     }
