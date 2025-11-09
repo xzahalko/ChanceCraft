@@ -35,6 +35,9 @@
     <Compile Include="ChanceCraft.cs" />
     <Compile Include="ChanceCraftUIRefreshUsage.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
+    <Compile Include="ChanceCraftResourceHelpers.cs" />
+    <Compile Include="ChanceCraftUIHelpers.cs" />
+    <Compile Include="ChanceCraftRecipeHelpers.cs" />
     <Compile Include="UIRemoteRefresher.cs" />
   </ItemGroup>
   <ItemGroup>
