@@ -1,8 +1,8 @@
-﻿// ChanceCraft.cs - updated to use non-generic Queue in TryExtractRecipeFromWrapper (no System assembly reference needed)
-// - Includes WrapperQueueNode helper and an implementation of TryExtractRecipeFromWrapper that uses System.Collections.Queue.
-// - This file also contains previous fixes: ItemInfo returns correctly, ObjectDB.recipe enumeration cast to IEnumerable, HashSet -> List replacements where needed.
+﻿// ChanceCraft.cs - updated to add ForceSimulateTabSwitchRefresh_Deep improvements and avoid System.Collections.Generic.Queue<T>
+// - Replaced Queue<UnityEngine.Transform> usage with a List<UnityEngine.Transform> FIFO to avoid forwarded generic Queue<> dependency.
+// - Keep other previous fixes (non-generic Queue in TryExtractRecipeFromWrapper, HashSet -> List replacements where needed).
 //
-// Note: You still need Valheim/Unity assemblies referenced (Assembly-CSharp.dll, UnityEngine.dll). This change avoids requiring System.dll for generic Queue<T>.
+// Note: You still need Valheim/Unity assemblies referenced (Assembly-CSharp.dll, UnityEngine.dll). This change avoids requiring System.dll for Queue<T>.
 
 using BepInEx;
 using BepInEx.Configuration;
@@ -1532,6 +1532,8 @@ namespace ChanceCraft
                         {
                             RefreshInventoryGui(gui);
                             RefreshCraftingPanel(gui);
+                            DumpInventoryGuiStructure(gui);
+                            ForceSimulateTabSwitchRefresh_Deep(gui); // <- more aggressive refresh
                             gui?.StartCoroutine(DelayedRefreshCraftingPanel(gui, 1));
                         }
                         catch { }
@@ -2205,6 +2207,400 @@ namespace ChanceCraft
                 }
             }
             catch { }
+        }
+
+        // Diagnostic: dump InventoryGui fields and GameObject children to the plugin log (enable loggingEnabled = true)
+        private static void DumpInventoryGuiStructure(InventoryGui gui)
+        {
+            try
+            {
+                if (gui == null) { LogInfo("DumpInventoryGuiStructure: gui is null"); return; }
+                var t = gui.GetType();
+                LogInfo("DumpInventoryGuiStructure: InventoryGui type = " + t.FullName);
+                // Fields summary
+                foreach (var f in t.GetFields(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic))
+                {
+                    try
+                    {
+                        object val = null;
+                        try { val = f.GetValue(gui); } catch { val = "<unreadable>"; }
+                        string valType = val == null ? "null" : (val.GetType().FullName + (val is System.Collections.IEnumerable ? " (IEnumerable)" : ""));
+                        LogInfo($"Field: {f.Name} : {f.FieldType.FullName} => {valType}");
+                    }
+                    catch { }
+                }
+                // Properties summary
+                foreach (var p in t.GetProperties(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic))
+                {
+                    try
+                    {
+                        object val = null;
+                        if (p.GetIndexParameters().Length == 0 && p.CanRead)
+                        {
+                            try { val = p.GetValue(gui); } catch { val = "<unreadable>"; }
+                        }
+                        string valType = val == null ? "null" : (val.GetType().FullName + (val is System.Collections.IEnumerable ? " (IEnumerable)" : ""));
+                        LogInfo($"Property: {p.Name} : {p.PropertyType.FullName} => {valType}");
+                    }
+                    catch { }
+                }
+
+                // Dump selected recipe if present
+                try
+                {
+                    var selField = t.GetField("m_selectedRecipe", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                    if (selField != null)
+                    {
+                        var selVal = selField.GetValue(gui);
+                        if (selVal != null) LogInfo("m_selectedRecipe value type = " + selVal.GetType().FullName);
+                        else LogInfo("m_selectedRecipe is null");
+                    }
+                }
+                catch { }
+
+                // Dump GameObject children (UI controls) — limited depth to avoid huge logs
+                try
+                {
+                    var rootGo = (gui as Component)?.gameObject;
+                    if (rootGo == null) rootGo = typeof(InventoryGui).GetField("m_root", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)?.GetValue(gui) as GameObject;
+                    if (rootGo == null) LogInfo("DumpInventoryGuiStructure: gui.gameObject unknown");
+                    else
+                    {
+                        LogInfo("DumpInventoryGuiStructure: dumping child hierarchy (depth 3) for " + rootGo.name);
+                        void DumpChildren(UnityEngine.Transform tr, int depth)
+                        {
+                            if (tr == null || depth <= 0) return;
+                            for (int i = 0; i < tr.childCount; i++)
+                            {
+                                var c = tr.GetChild(i);
+                                string info = $"GO: {new string(' ', (3 - depth) * 2)}{c.name}";
+                                // detect UI components
+                                var btn = c.GetComponent<UnityEngine.UI.Button>();
+                                if (btn != null) info += " [Button]";
+                                var tog = c.GetComponent<UnityEngine.UI.Toggle>();
+                                if (tog != null) info += " [Toggle]";
+                                var txt = c.GetComponent<UnityEngine.UI.Text>();
+                                if (txt != null) info += $" [Text='{txt.text}']";
+                                LogInfo(info);
+                                DumpChildren(c, depth - 1);
+                            }
+                        }
+                        DumpChildren(rootGo.transform, 3);
+                    }
+                }
+                catch (Exception ex) { LogWarning("DumpInventoryGuiStructure: child dump failed: " + ex); }
+            }
+            catch (Exception ex)
+            {
+                LogWarning("DumpInventoryGuiStructure failed: " + ex);
+            }
+        }
+
+        private static IEnumerator ForceSimulateTabSwitchRefresh_Finalize(InventoryGui gui)
+        {
+            if (gui == null) yield break;
+            // wait two frames so the InventoryGui's own handlers/coroutines run to completion
+            yield return null;
+            yield return null;
+
+            try
+            {
+                // primary refresh attempts
+                try { RefreshInventoryGui(gui); } catch { }
+                try { RefreshCraftingPanel(gui); } catch { }
+
+                // force-selected-recipe flick (null -> restore) to make InventoryGui re-evaluate the selection fully
+                try
+                {
+                    var t = gui.GetType();
+                    var selField = t.GetField("m_selectedRecipe", BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
+                    if (selField != null)
+                    {
+                        var cur = selField.GetValue(gui);
+                        selField.SetValue(gui, null);
+                        // do one more refresh to ensure the internal state sees the null
+                        try { RefreshCraftingPanel(gui); } catch { }
+                        selField.SetValue(gui, cur);
+                    }
+                }
+                catch { }
+
+                // final delayed refresh as conservative fallback
+                try { gui?.StartCoroutine(DelayedRefreshCraftingPanel(gui, 1)); } catch { }
+            }
+            catch (Exception ex)
+            {
+                LogWarning($"ForceSimulateTabSwitchRefresh_Finalize exception: {ex}");
+            }
+        }
+
+        // ForceSimulateTabSwitchRefresh_Deep - aggressive tab refresh that attempts clicks and starts a finalize coroutine
+        private static void ForceSimulateTabSwitchRefresh_Deep(InventoryGui gui)
+        {
+            if (gui == null) return;
+            var t = gui.GetType();
+
+            try
+            {
+                // helper to execute a pointer click on a GameObject (Unity UI)
+                bool TryPointerClickOnGameObject(GameObject go)
+                {
+                    if (go == null) return false;
+                    try
+                    {
+                        // build a dummy PointerEventData
+                        var ed = new UnityEngine.EventSystems.PointerEventData(UnityEngine.EventSystems.EventSystem.current);
+                        // call ExecuteEvents.Execute with IPointerClickHandler
+                        bool handled = UnityEngine.EventSystems.ExecuteEvents.Execute<UnityEngine.EventSystems.IPointerClickHandler>(go, ed, (handler, eventData) =>
+                        {
+                            try { handler.OnPointerClick((UnityEngine.EventSystems.PointerEventData)eventData); } catch { }
+                        });
+                        if (handled) { LogInfo($"ForceSimulateTabSwitchRefresh_Deep: ExecuteEvents click on '{go.name}' succeeded"); return true; }
+
+                        // try GetComponent<Button>() and invoke onClick
+                        var btn = go.GetComponent<UnityEngine.UI.Button>();
+                        if (btn != null)
+                        {
+                            try { btn.onClick.Invoke(); LogInfo($"ForceSimulateTabSwitchRefresh_Deep: Button.onClick invoked on '{go.name}'"); } catch { }
+                            return true;
+                        }
+
+                        // try Toggle - flip value to trigger listeners
+                        var tog = go.GetComponent<UnityEngine.UI.Toggle>();
+                        if (tog != null)
+                        {
+                            try
+                            {
+                                bool orig = tog.isOn;
+                                tog.isOn = !orig;
+                                tog.isOn = orig;
+                                LogInfo($"ForceSimulateTabSwitchRefresh_Deep: toggled Toggle '{go.name}'");
+                            }
+                            catch { }
+                            return true;
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        LogWarning("TryPointerClickOnGameObject failed: " + ex);
+                    }
+                    return false;
+                }
+
+                // Strategy A: search the GUI GameObject tree for Buttons/Toggles/Selectable with text containing "upgrade"
+                GameObject root = (gui as Component)?.gameObject;
+                if (root != null)
+                {
+                    // collect candidate GameObjects (search depth-first, small limit)
+                    var list = new List<UnityEngine.Transform>();
+                    list.Add(root.transform);
+                    int nodesVisited = 0;
+                    int qi = 0;
+
+                    while (qi < list.Count && nodesVisited < 1000)
+                    {
+                        var tr = list[qi++];
+                        nodesVisited++;
+                        // Check this transform
+                        try
+                        {
+                            var go = tr.gameObject;
+                            // check Text component on this GO or children
+                            var txt = go.GetComponentInChildren<UnityEngine.UI.Text>(true);
+                            string txtVal = txt?.text ?? "";
+                            string nameLow = (go.name ?? "").ToLowerInvariant();
+                            string txtLow = (txtVal ?? "").ToLowerInvariant();
+
+                            // look for tab labels: upgrade, upgrades, upgrade tab, craft, recipes
+                            if (nameLow.Contains("upgrade") || txtLow.Contains("upgrade") || nameLow.Contains("upgrades") || txtLow.Contains("upgrades") || (nameLow.Contains("tab") && txtLow.Contains("upgrade")))
+                            {
+                                if (TryPointerClickOnGameObject(go))
+                                {
+                                    try
+                                    {
+                                        var mb = gui as MonoBehaviour;
+                                        if (mb != null) mb.StartCoroutine(ForceSimulateTabSwitchRefresh_Finalize(gui));
+                                        else Player.m_localPlayer?.StartCoroutine(ForceSimulateTabSwitchRefresh_Finalize(gui));
+                                    }
+                                    catch { }
+                                    return;
+                                }
+                            }
+
+                            // also try if it has a Button or Toggle
+                            if (go.GetComponent<UnityEngine.UI.Button>() != null || go.GetComponent<UnityEngine.UI.Toggle>() != null)
+                            {
+                                // prefer elements whose text contains "upgrade" but try others if none matched
+                                if (txtLow.Length > 0 && (txtLow.Contains("upgrade") || txtLow.Contains("upgrades") || txtLow.Contains("craft") || txtLow.Contains("recipes")))
+                                {
+                                    if (TryPointerClickOnGameObject(go))
+                                    {
+                                        try
+                                        {
+                                            var mb = gui as MonoBehaviour;
+                                            if (mb != null) mb.StartCoroutine(ForceSimulateTabSwitchRefresh_Finalize(gui));
+                                            else Player.m_localPlayer?.StartCoroutine(ForceSimulateTabSwitchRefresh_Finalize(gui));
+                                        }
+                                        catch { }
+                                        return;
+                                    }
+                                }
+                            }
+                        }
+                        catch { }
+
+                        // enqueue children
+                        for (int i = 0; i < tr.childCount; i++)
+                        {
+                            var child = tr.GetChild(i);
+                            list.Add(child);
+                        }
+                    }
+                    LogInfo("ForceSimulateTabSwitchRefresh_Deep: Strategy A scanned UI tree; none clicked by name/text");
+                }
+                else
+                {
+                    LogInfo("ForceSimulateTabSwitchRefresh_Deep: gui.gameObject is null; cannot scan UI tree");
+                }
+
+                // Strategy B: find fields that are lists/enumerables of tab buttons and try invoking them
+                foreach (var f in t.GetFields(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic))
+                {
+                    try
+                    {
+                        if (typeof(System.Collections.IEnumerable).IsAssignableFrom(f.FieldType))
+                        {
+                            var col = f.GetValue(gui) as System.Collections.IEnumerable;
+                            if (col == null) continue;
+                            var elems = new System.Collections.Generic.List<object>();
+                            foreach (var e in col) elems.Add(e);
+                            if (elems.Count == 0) continue;
+                            // try first few elements
+                            for (int i = 0; i < Math.Min(6, elems.Count); i++)
+                            {
+                                var e = elems[i];
+                                // if e is GameObject or Component, get gameObject
+                                GameObject go = null;
+                                if (e is GameObject g) go = g;
+                                else if (e is Component c) go = c.gameObject;
+                                else
+                                {
+                                    var gp = e?.GetType().GetProperty("gameObject", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                                    if (gp != null) go = gp.GetValue(e) as GameObject;
+                                }
+                                if (go != null)
+                                {
+                                    if (TryPointerClickOnGameObject(go))
+                                    {
+                                        try
+                                        {
+                                            var mb = gui as MonoBehaviour;
+                                            if (mb != null) mb.StartCoroutine(ForceSimulateTabSwitchRefresh_Finalize(gui));
+                                            else Player.m_localPlayer?.StartCoroutine(ForceSimulateTabSwitchRefresh_Finalize(gui));
+                                        }
+                                        catch { }
+                                        return;
+                                    }
+                                }
+                                else
+                                {
+                                    // try reflectively invoking onClick/onValueChanged if present
+                                    try
+                                    {
+                                        var onClickField = e?.GetType().GetField("onClick", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                                        if (onClickField != null)
+                                        {
+                                            var oc = onClickField.GetValue(e);
+                                            oc?.GetType().GetMethod("Invoke", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)?.Invoke(oc, null);
+                                            LogInfo($"ForceSimulateTabSwitchRefresh_Deep: reflectively invoked onClick on field '{f.Name}' element[{i}]");
+                                            try
+                                            {
+                                                var mb = gui as MonoBehaviour;
+                                                if (mb != null) mb.StartCoroutine(ForceSimulateTabSwitchRefresh_Finalize(gui));
+                                                else Player.m_localPlayer?.StartCoroutine(ForceSimulateTabSwitchRefresh_Finalize(gui));
+                                            }
+                                            catch { }
+                                            return;
+                                        }
+                                        var onValField = e?.GetType().GetField("onValueChanged", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                                        if (onValField != null)
+                                        {
+                                            var oc = onValField.GetValue(e);
+                                            oc?.GetType().GetMethod("Invoke", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)?.Invoke(oc, new object[] { true });
+                                            LogInfo($"ForceSimulateTabSwitchRefresh_Deep: reflectively invoked onValueChanged on field '{f.Name}' element[{i}]");
+                                            try
+                                            {
+                                                var mb = gui as MonoBehaviour;
+                                                if (mb != null) mb.StartCoroutine(ForceSimulateTabSwitchRefresh_Finalize(gui));
+                                                else Player.m_localPlayer?.StartCoroutine(ForceSimulateTabSwitchRefresh_Finalize(gui));
+                                            }
+                                            catch { }
+                                            return;
+                                        }
+                                    }
+                                    catch { }
+                                }
+                            }
+                        }
+                    }
+                    catch { }
+                }
+
+                // Strategy C: try flipping int fields + calling candidate methods (fallback)
+                string[] intFieldNames = {
+            "m_selectedTab","m_currentTab","m_tabIndex","m_selectedCategory","m_currentCategory","m_selectedIndex","m_currentIndex"
+        };
+                foreach (var name in intFieldNames)
+                {
+                    try
+                    {
+                        var f = t.GetField(name, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                        if (f == null || f.FieldType != typeof(int)) continue;
+                        int orig = (int)f.GetValue(gui);
+                        int alt = orig == 0 ? 1 : 0;
+                        f.SetValue(gui, alt);
+                        // call Update methods
+                        foreach (var mname in new[] { "SelectTab", "SwitchTab", "SetTab", "OnTabChanged", "UpdateCraftingPanel", "Refresh" })
+                        {
+                            var m = t.GetMethod(mname, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                            if (m == null) continue;
+                            try
+                            {
+                                var ps = m.GetParameters();
+                                if (ps.Length == 1 && ps[0].ParameterType == typeof(int)) m.Invoke(gui, new object[] { alt });
+                                else if (ps.Length == 0) m.Invoke(gui, null);
+                            }
+                            catch { }
+                        }
+                        f.SetValue(gui, orig);
+                        LogInfo($"ForceSimulateTabSwitchRefresh_Deep: flipped int field {name} fallback");
+                        return;
+                    }
+                    catch { }
+                }
+
+                // final fallback: clear selected recipe and restore
+                try
+                {
+                    var selField = t.GetField("m_selectedRecipe", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                    if (selField != null)
+                    {
+                        var cur = selField.GetValue(gui);
+                        selField.SetValue(gui, null);
+                        try { RefreshCraftingPanel(gui); } catch { }
+                        selField.SetValue(gui, cur);
+                        LogInfo("ForceSimulateTabSwitchRefresh_Deep: last-resort cleared/restored m_selectedRecipe");
+                        return;
+                    }
+                }
+                catch { }
+
+                LogWarning("ForceSimulateTabSwitchRefresh_Deep: no strategy succeeded");
+            }
+            catch (Exception ex)
+            {
+                LogWarning("ForceSimulateTabSwitchRefresh_Deep failed: " + ex);
+            }
         }
 
         private static IEnumerator DelayedRefreshCraftingPanel(InventoryGui gui, int delayFrames = 1)
