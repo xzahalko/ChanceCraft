@@ -2383,450 +2383,194 @@ namespace ChanceCraft
         }
 
         // RemoveRequiredResourcesUpgrade: prefer GUI-captured normalized requirements; fallback to recipe/ObjectDB resources
-        public static void RemoveRequiredResourcesUpgrade(InventoryGui gui, Player player, Recipe selectedRecipe, ItemDrop.ItemData upgradeTargetItem, bool crafted)
+        // Replace the existing RemoveRequiredResourcesUpgrade(...) function with this implementation.
+
+        public static void RemoveRequiredResourcesUpgrade(InventoryGui gui, Player player, Recipe selectedRecipe, ItemDrop.ItemData upgradeTarget, bool crafted)
         {
             if (player == null || selectedRecipe == null) return;
             var inventory = player.GetInventory();
             if (inventory == null) return;
 
-            // Compute a stable removal key for idempotency (recipe fingerprint + target hash + crafted flag)
-            string removalKey = null;
-            bool removalKeyAdded = false;
             try
             {
-                try
+                // Read craftUpgrade (levels) from GUI if available
+                var craftUpgradeField = typeof(InventoryGui).GetField("m_craftUpgrade", BindingFlags.Instance | BindingFlags.NonPublic);
+                int craftUpgrade = 1;
+                if (craftUpgradeField != null)
                 {
-                    var recipeKeyNow = selectedRecipe != null ? RecipeFingerprint(selectedRecipe) : "null";
-                    var targetHash = upgradeTargetItem != null ? RuntimeHelpers.GetHashCode(upgradeTargetItem).ToString("X") : "null";
-                    removalKey = $"{recipeKeyNow}|t:{targetHash}|crafted:{crafted}";
-                }
-                catch { removalKey = null; }
-
-                if (!string.IsNullOrEmpty(removalKey))
-                {
-                    lock (_recentRemovalKeysLock)
-                    {
-                        if (_recentRemovalKeys.Contains(removalKey))
-                        {
-                            LogInfo($"RemoveRequiredResourcesUpgrade: skipping duplicate removal for {removalKey}");
-                            return;
-                        }
-                        _recentRemovalKeys.Add(removalKey);
-                        removalKeyAdded = true;
-                    }
-
-                    // Diagnostic: log the caller stack for the removal that will run (temporary)
                     try
                     {
-                        if (VERBOSE_DEBUG)
-                        {
-                            var st = new System.Diagnostics.StackTrace(1, false);
-                            var frame = st.GetFrame(0);
-                            var caller = frame != null ? $"{frame.GetMethod()?.DeclaringType?.Name}.{frame.GetMethod()?.Name}" : "unknown";
-                            LogInfo($"RemoveRequiredResourcesUpgrade CALLER: removalKey={removalKey} caller={caller}");
-                        }
+                        object cv = craftUpgradeField.GetValue(gui);
+                        if (cv is int iv && iv > 0) craftUpgrade = iv;
                     }
-                    catch { }
+                    catch { craftUpgrade = 1; }
                 }
 
-                if (VERBOSE_DEBUG)
+                // helper to extract recipe resources (same reflection used elsewhere)
+                object GetMember(object obj, string name)
                 {
-                    try
-                    {
-                        string rf = selectedRecipe != null ? RecipeFingerprint(selectedRecipe) : "null";
-                        var targetHashDbg = upgradeTargetItem != null ? RuntimeHelpers.GetHashCode(upgradeTargetItem).ToString("X") : "null";
-                        LogInfo($"RemoveRequiredResourcesUpgrade-ENTRY: recipe={rf} targetHash={targetHashDbg} crafted={crafted}");
-                        if (_upgradeGuiRequirements != null && _upgradeGuiRequirements.Count > 0)
-                            LogInfo("RemoveRequiredResourcesUpgrade-DBG guiReqs: " + string.Join(", ", _upgradeGuiRequirements.Select(x => $"{x.name}:{x.amount}")));
-                    }
-                    catch { }
+                    if (obj == null) return null;
+                    var t = obj.GetType();
+                    var f = t.GetField(name, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                    if (f != null) return f.GetValue(obj);
+                    var p = t.GetProperty(name, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                    if (p != null) return p.GetValue(obj);
+                    return null;
                 }
 
-                // ----- Begin original method body (unchanged logic except additional verbose logs) -----
-                // If we captured GUI requirements earlier, use them
-                if (_upgradeGuiRequirements != null && _upgradeGuiRequirements.Count > 0)
+                object resourcesObj = GetMember(selectedRecipe, "m_resources");
+                var resources = resourcesObj as IEnumerable;
+                if (resources == null) return;
+                var resourceList = resources.Cast<object>().ToList();
+
+                // Build list of (resourceName, perLevelAmount)
+                var validReqs = new List<(string name, int perLevel)>();
+                foreach (var req in resourceList)
                 {
-                    var guiReqsLocal = _upgradeGuiRequirements.ToList();
-                    _upgradeGuiRequirements = null;
-
-                    int levelsToUpgrade = 1;
                     try
                     {
-                        if (upgradeTargetItem != null)
-                        {
-                            var recipeForQuality = _upgradeGuiRecipe ?? _upgradeRecipe ?? selectedRecipe;
-                            int finalQuality = recipeForQuality?.m_item?.m_itemData?.m_quality ?? 0;
-                            levelsToUpgrade = Math.Max(1, finalQuality - upgradeTargetItem.m_quality);
-                        }
-                        else
-                        {
-                            var craftUpgradeFieldLocal = typeof(InventoryGui).GetField("m_craftUpgrade", BindingFlags.Instance | BindingFlags.NonPublic);
-                            if (craftUpgradeFieldLocal != null)
-                            {
-                                var cvObj = craftUpgradeFieldLocal.GetValue(gui);
-                                if (cvObj is int v && v > 0) levelsToUpgrade = v;
-                            }
-                        }
-                    }
-                    catch { levelsToUpgrade = 1; }
-
-                    Recipe dbCandidate = null;
-                    try
-                    {
-                        if (upgradeTargetItem != null && ObjectDB.instance != null)
-                        {
-                            string desiredResultName = selectedRecipe.m_item?.m_itemData?.m_shared?.m_name;
-                            int desiredQuality = upgradeTargetItem.m_quality + 1;
-                            var dbEnumerable = ObjectDB.instance.m_recipes as IEnumerable;
-                            if (dbEnumerable != null)
-                            {
-                                foreach (var rObj in dbEnumerable)
-                                {
-                                    var r = rObj as Recipe;
-                                    if (r == null) continue;
-                                    try
-                                    {
-                                        var rn = r.m_item.m_itemData?.m_shared?.m_name;
-                                        int q = r.m_item.m_itemData?.m_quality ?? 0;
-                                        if (string.Equals(rn, desiredResultName, StringComparison.OrdinalIgnoreCase) && q == desiredQuality)
-                                        {
-                                            dbCandidate = r;
-                                            break;
-                                        }
-                                    }
-                                    catch { }
-                                }
-                            }
-                        }
-                        if (dbCandidate == null) dbCandidate = FindBestUpgradeRecipeCandidate(selectedRecipe);
-                    }
-                    catch { dbCandidate = null; }
-
-                    foreach (var rr in guiReqsLocal)
-                    {
+                        var resItem = GetMember(req, "m_resItem");
+                        if (resItem == null) continue;
+                        string resName = null;
                         try
                         {
-                            int perLevel = rr.amount;
-                            if (levelsToUpgrade > 1 && rr.amount > 0 && (rr.amount % levelsToUpgrade) == 0) perLevel = rr.amount / levelsToUpgrade;
-                            else if (dbCandidate != null && rr.amount > 0)
-                            {
-                                try
-                                {
-                                    var resourcesField2 = dbCandidate.GetType().GetField("m_resources", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-                                    var candidateResources = resourcesField2?.GetValue(dbCandidate) as IEnumerable;
-                                    if (candidateResources != null)
-                                    {
-                                        foreach (var req in candidateResources)
-                                        {
-                                            try
-                                            {
-                                                var et = req.GetType();
-                                                var nameObj = et.GetField("m_resItem", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)?.GetValue(req);
-                                                string resName = null;
-                                                if (nameObj != null)
-                                                {
-                                                    var itemData = nameObj.GetType().GetField("m_itemData", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)?.GetValue(nameObj);
-                                                    var shared = itemData?.GetType().GetField("m_shared", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)?.GetValue(itemData);
-                                                    resName = shared?.GetType().GetField("m_name", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)?.GetValue(shared) as string;
-                                                }
-                                                if (string.IsNullOrEmpty(resName)) continue;
-                                                if (!string.Equals(resName, rr.name, StringComparison.OrdinalIgnoreCase)) continue;
-                                                var perLevelObj = et.GetField("m_amountPerLevel", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)?.GetValue(req);
-                                                if (perLevelObj != null) { perLevel = Convert.ToInt32(perLevelObj); }
-                                                else
-                                                {
-                                                    var dbAmtObj = et.GetField("m_amount", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)?.GetValue(req);
-                                                    int dbAmount = dbAmtObj != null ? Convert.ToInt32(dbAmtObj) : 0;
-                                                    if (dbAmount > 0)
-                                                    {
-                                                        if (levelsToUpgrade > 1 && (dbAmount % levelsToUpgrade) == 0) perLevel = dbAmount / levelsToUpgrade;
-                                                        else if (dbAmount < rr.amount) perLevel = dbAmount;
-                                                    }
-                                                }
-                                                break;
-                                            }
-                                            catch { }
-                                        }
-                                    }
-                                }
-                                catch { }
-                            }
-
-                            // Compute amount we will request to remove. If crafted==true we need the full amount (perLevel * levelsToUpgrade)
-                            int amountToRemove = perLevel;
-                            if (crafted) amountToRemove = perLevel * Math.Max(1, levelsToUpgrade);
-
-                            // Add diagnostic logging so you can see what we computed
-                            try
-                            {
-                                string dbKey = dbCandidate != null ? RecipeFingerprint(dbCandidate) : "null";
-                                LogInfo($"RemoveRequiredResourcesUpgrade-DBG: resource={rr.name} perLevel={perLevel} levelsToUpgrade={levelsToUpgrade} crafted={crafted} dbCandidate={dbKey} requestedRemove={amountToRemove}");
-                            }
-                            catch { }
-
-                            if (VERBOSE_DEBUG)
-                            {
-                                try
-                                {
-                                    var st = new System.Diagnostics.StackTrace(1, false);
-                                    var frame = st.GetFrame(0);
-                                    var caller = frame != null ? $"{frame.GetMethod()?.DeclaringType?.Name}.{frame.GetMethod()?.Name}" : "unknown";
-                                    LogInfo($"R3U-DBG beforeRemove: resource={rr.name} perLevel={perLevel} levels={levelsToUpgrade} requested={amountToRemove} caller={caller} time={DateTime.UtcNow:HH:mm:ss.fff}");
-                                }
-                                catch { }
-                            }
-
-                            int removed = RemoveAmountFromInventorySkippingTarget(inventory, upgradeTargetItem, rr.name, amountToRemove);
-                            LogInfo($"RemoveRequiredResourcesUpgrade: removed {removed}/{amountToRemove} of {rr.name}");
+                            var itemData = resItem.GetType().GetField("m_itemData", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)?.GetValue(resItem);
+                            var shared = itemData?.GetType().GetField("m_shared", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)?.GetValue(itemData);
+                            resName = shared?.GetType().GetField("m_name", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)?.GetValue(shared) as string;
                         }
-                        catch (Exception ex)
+                        catch { }
+                        if (string.IsNullOrEmpty(resName)) continue;
+
+                        int perLevel = 0;
+                        try { var pl = req.GetType().GetField("m_amountPerLevel", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)?.GetValue(req); perLevel = pl != null ? Convert.ToInt32(pl) : 0; } catch { perLevel = 0; }
+                        int baseAmount = 0;
+                        try { var a = req.GetType().GetField("m_amount", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)?.GetValue(req); baseAmount = a != null ? Convert.ToInt32(a) : 0; } catch { baseAmount = 0; }
+
+                        // For upgrade logic, we care about per-level amounts; if perLevel==0 fallback to baseAmount
+                        int effectivePerLevel = perLevel > 0 ? perLevel : baseAmount;
+                        if (effectivePerLevel > 0) validReqs.Add((resName, effectivePerLevel));
+                    }
+                    catch { }
+                }
+
+                if (validReqs.Count == 0) return;
+
+                // resultName (to optionally skip removing the produced target resource)
+                string resultName = null;
+                try { resultName = selectedRecipe.m_item?.m_itemData?.m_shared?.m_name; } catch { resultName = null; }
+
+                // Helper to remove amount while skipping the upgrade target item if needed (keeps same semantics as R3U)
+                int RemoveAmountSkippingTarget(string resourceName, int amount)
+                {
+                    // Use existing helper if present in file; otherwise reimplement minimal removal that avoids the upgradeTarget instance
+                    try
+                    {
+                        // Prefer calling a central helper if available
+                        var method = typeof(ChanceCraftPlugin).GetMethod("RemoveAmountFromInventorySkippingTarget", BindingFlags.Static | BindingFlags.NonPublic | BindingFlags.Public);
+                        if (method != null)
                         {
-                            LogWarning($"RemoveRequiredResourcesUpgrade inner exception: {ex}");
+                            object removed = method.Invoke(null, new object[] { inventory, resourceName, amount, upgradeTarget });
+                            if (removed is int ri) return ri;
                         }
+                    }
+                    catch { }
+
+                    // Fallback: remove normally but try to avoid target by removing from stacks that are not the target
+                    int remaining = amount;
+                    var items = inventory.GetAllItems();
+                    if (items == null) return 0;
+
+                    // First pass: remove from stacks that are not the upgradeTarget (by reference/hash)
+                    for (int i = items.Count - 1; i >= 0 && remaining > 0; i--)
+                    {
+                        var it = items[i];
+                        if (it == null || it.m_shared == null) continue;
+                        if (!string.Equals(it.m_shared.m_name, resourceName, StringComparison.OrdinalIgnoreCase)) continue;
+                        if (upgradeTarget != null && (ReferenceEquals(it, upgradeTarget) || RuntimeHelpers.GetHashCode(it) == RuntimeHelpers.GetHashCode(upgradeTarget))) continue;
+                        int toRemove = Math.Min(it.m_stack, remaining);
+                        int before = it.m_stack;
+                        it.m_stack -= toRemove;
+                        remaining -= toRemove;
+                        try { LogInfo($"RemoveAmountFromInventorySkippingTarget-REMOVE: removed={toRemove} from stackHash={RuntimeHelpers.GetHashCode(it):X} name={it.m_shared.m_name} q={it.m_quality} beforeStack={before} afterStack={it.m_stack}"); } catch { }
+                        if (it.m_stack <= 0)
+                        {
+                            try { inventory.RemoveItem(it); } catch { }
+                        }
+                    }
+
+                    // Second pass: remove from any remaining stacks (may include target)
+                    if (remaining > 0)
+                    {
+                        for (int i = items.Count - 1; i >= 0 && remaining > 0; i--)
+                        {
+                            var it = items[i];
+                            if (it == null || it.m_shared == null) continue;
+                            if (!string.Equals(it.m_shared.m_name, resourceName, StringComparison.OrdinalIgnoreCase)) continue;
+                            int toRemove = Math.Min(it.m_stack, remaining);
+                            int before = it.m_stack;
+                            it.m_stack -= toRemove;
+                            remaining -= toRemove;
+                            try { LogInfo($"RemoveAmountFromInventorySkippingTarget-REMOVE-FALLBACK: removed={toRemove} from stackHash={RuntimeHelpers.GetHashCode(it):X} name={it.m_shared.m_name} q={it.m_quality} beforeStack={before} afterStack={it.m_stack}"); } catch { }
+                            if (it.m_stack <= 0)
+                            {
+                                try { inventory.RemoveItem(it); } catch { }
+                            }
+                        }
+                    }
+
+                    return amount - remaining;
+                }
+
+                if (!crafted)
+                {
+                    // UPGRADE FAILURE: remove only one randomly chosen required resource (per-level * craftUpgrade)
+                    var candidates = validReqs.Where(r => !(string.Equals(r.name, resultName, StringComparison.OrdinalIgnoreCase))).ToList();
+                    if (candidates.Count == 0)
+                    {
+                        // if all required resources equal the result (rare), allow removing from validReqs
+                        candidates = validReqs;
+                    }
+
+                    int idx = UnityEngine.Random.Range(0, candidates.Count);
+                    var chosen = candidates[idx];
+                    int amountToRemove = chosen.perLevel * Math.Max(1, craftUpgrade);
+
+                    try { LogInfo($"RemoveRequiredResourcesUpgrade-FAIL: chosenResource={chosen.name} amount={amountToRemove} targetHash={(upgradeTarget != null ? RuntimeHelpers.GetHashCode(upgradeTarget).ToString("X") : "null")}"); } catch { }
+
+                    int removed = RemoveAmountSkippingTarget(chosen.name, amountToRemove);
+
+                    try { LogInfo($"RemoveRequiredResourcesUpgrade-FAIL: removed={removed} requested={amountToRemove} resource={chosen.name}"); } catch { }
+                    return;
+                }
+                else
+                {
+                    // UPGRADE SUCCESS: remove per-level amounts for all required resources (same behaviour as before)
+                    foreach (var req in validReqs)
+                    {
+                        // skip removing the produced result resource
+                        if (!string.IsNullOrEmpty(resultName) && string.Equals(req.name, resultName, StringComparison.OrdinalIgnoreCase))
+                        {
+                            continue;
+                        }
+
+                        int amountToRemove = req.perLevel * Math.Max(1, craftUpgrade);
+                        try { LogInfo($"RemoveRequiredResourcesUpgrade: removing (crafted) {req.name} amount={amountToRemove}"); } catch { }
+
+                        int removed = 0;
+                        try
+                        {
+                            removed = RemoveAmountSkippingTarget(req.name, amountToRemove);
+                        }
+                        catch (Exception ex) { LogWarning($"RemoveRequiredResourcesUpgrade removal exception: {ex}"); }
+
+                        try { LogInfo($"RemoveRequiredResourcesUpgrade: removal result {req.name} removed={removed} requested={amountToRemove}"); } catch { }
                     }
                     return;
                 }
-
-                // Try GUI-provided list fallback
-                bool haveGuiReqs = TryGetRequirementsFromGui(gui, out var guiReqsFallback);
-                if (haveGuiReqs && guiReqsFallback != null && guiReqsFallback.Count > 0)
-                {
-                    int levelsToUpgrade = 1;
-                    try
-                    {
-                        if (upgradeTargetItem != null)
-                        {
-                            var recipeForQuality = _upgradeGuiRecipe ?? _upgradeRecipe ?? selectedRecipe;
-                            int finalQuality = recipeForQuality?.m_item?.m_itemData?.m_quality ?? 0;
-                            levelsToUpgrade = Math.Max(1, finalQuality - upgradeTargetItem.m_quality);
-                        }
-                        else
-                        {
-                            var craftUpgradeFieldLocal = typeof(InventoryGui).GetField("m_craftUpgrade", BindingFlags.Instance | BindingFlags.NonPublic);
-                            if (craftUpgradeFieldLocal != null)
-                            {
-                                var cvObj = craftUpgradeFieldLocal.GetValue(gui);
-                                if (cvObj is int v && v > 0) levelsToUpgrade = v;
-                            }
-                        }
-                    }
-                    catch { levelsToUpgrade = 1; }
-
-                    Recipe dbCandidate = null;
-                    try
-                    {
-                        if (upgradeTargetItem != null && ObjectDB.instance != null)
-                        {
-                            string desiredResult = selectedRecipe.m_item?.m_itemData?.m_shared?.m_name;
-                            int desiredQuality = upgradeTargetItem.m_quality + 1;
-                            var dbEnumerable = ObjectDB.instance.m_recipes as IEnumerable;
-                            if (dbEnumerable != null)
-                            {
-                                foreach (var rObj in dbEnumerable)
-                                {
-                                    var r = rObj as Recipe;
-                                    if (r == null) continue;
-                                    try
-                                    {
-                                        var rn = r.m_item.m_itemData?.m_shared?.m_name;
-                                        int q = r.m_item.m_itemData?.m_quality ?? 0;
-                                        if (string.Equals(rn, desiredResult, StringComparison.OrdinalIgnoreCase) && q == desiredQuality)
-                                        {
-                                            dbCandidate = r;
-                                            break;
-                                        }
-                                    }
-                                    catch { }
-                                }
-                            }
-                        }
-                        if (dbCandidate == null) dbCandidate = FindBestUpgradeRecipeCandidate(selectedRecipe);
-                    }
-                    catch { dbCandidate = null; }
-
-                    foreach (var g in guiReqsFallback)
-                    {
-                        int perLevel = g.amount;
-                        if (levelsToUpgrade > 1 && g.amount > 0 && (g.amount % levelsToUpgrade) == 0) perLevel = g.amount / levelsToUpgrade;
-                        else if (dbCandidate != null && g.amount > 0)
-                        {
-                            try
-                            {
-                                var resourcesField2 = dbCandidate.GetType().GetField("m_resources", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-                                var cr = resourcesField2?.GetValue(dbCandidate) as IEnumerable;
-                                if (cr != null)
-                                {
-                                    foreach (var req in cr)
-                                    {
-                                        try
-                                        {
-                                            var et = req.GetType();
-                                            var nameObj = et.GetField("m_resItem", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)?.GetValue(req);
-                                            string resName = null;
-                                            if (nameObj != null)
-                                            {
-                                                var itemData = nameObj.GetType().GetField("m_itemData", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)?.GetValue(nameObj);
-                                                var shared = itemData?.GetType().GetField("m_shared", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)?.GetValue(itemData);
-                                                resName = shared?.GetType().GetField("m_name", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)?.GetValue(shared) as string;
-                                            }
-                                            if (string.IsNullOrEmpty(resName)) continue;
-                                            if (!string.Equals(resName, g.name, StringComparison.OrdinalIgnoreCase)) continue;
-                                            var perLevelObj = et.GetField("m_amountPerLevel", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)?.GetValue(req);
-                                            if (perLevelObj != null) perLevel = Convert.ToInt32(perLevelObj);
-                                            else
-                                            {
-                                                var dbAmtObj = et.GetField("m_amount", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)?.GetValue(req);
-                                                int dbAmt = dbAmtObj != null ? Convert.ToInt32(dbAmtObj) : 0;
-                                                if (dbAmt > 0)
-                                                {
-                                                    if (levelsToUpgrade > 1 && (dbAmt % levelsToUpgrade) == 0) perLevel = dbAmt / levelsToUpgrade;
-                                                    else if (dbAmt < g.amount) perLevel = dbAmt;
-                                                }
-                                            }
-                                            break;
-                                        }
-                                        catch { }
-                                    }
-                                }
-                            }
-                            catch { }
-                        }
-
-                        int amountToRemove = perLevel;
-                        if (crafted) amountToRemove = perLevel * Math.Max(1, levelsToUpgrade);
-
-                        try
-                        {
-                            string dbKey = dbCandidate != null ? RecipeFingerprint(dbCandidate) : "null";
-                            LogInfo($"RemoveRequiredResourcesUpgrade-Fallback-DBG: resource={g.name} perLevel={perLevel} levelsToUpgrade={levelsToUpgrade} crafted={crafted} dbCandidate={dbKey} requestedRemove={amountToRemove}");
-                        }
-                        catch { }
-
-                        if (VERBOSE_DEBUG)
-                        {
-                            try
-                            {
-                                var st = new System.Diagnostics.StackTrace(1, false);
-                                var frame = st.GetFrame(0);
-                                var caller = frame != null ? $"{frame.GetMethod()?.DeclaringType?.Name}.{frame.GetMethod()?.Name}" : "unknown";
-                                LogInfo($"R3U-DBG beforeRemoveFallback: resource={g.name} perLevel={perLevel} levels={levelsToUpgrade} requested={amountToRemove} caller={caller} time={DateTime.UtcNow:HH:mm:ss.fff}");
-                            }
-                            catch { }
-                        }
-
-                        int removed2 = RemoveAmountFromInventorySkippingTarget(inventory, upgradeTargetItem, g.name, amountToRemove);
-                        LogInfo($"RemoveRequiredResourcesUpgrade-Fallback: removed {removed2}/{amountToRemove} of {g.name}");
-                    }
-                    return;
-                }
-
-                // Fallback: read resources from recipe or best candidate recipe and remove while skipping target item
-                var guiRecipeNow = GetUpgradeRecipeFromGui(gui);
-                Recipe recipeToUse = guiRecipeNow ?? _upgradeGuiRecipe ?? _upgradeRecipe ?? selectedRecipe;
-                if (ReferenceEquals(recipeToUse, selectedRecipe))
-                {
-                    var candidate = FindBestUpgradeRecipeCandidate(selectedRecipe);
-                    if (candidate != null) recipeToUse = candidate;
-                }
-
-                try
-                {
-                    var resourcesField = recipeToUse.GetType().GetField("m_resources", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-                    var resources = resourcesField?.GetValue(recipeToUse) as IEnumerable;
-                    if (resources == null) return;
-
-                    int craftUpgradeVal = 1;
-                    try
-                    {
-                        var craftUpgradeField = typeof(InventoryGui).GetField("m_craftUpgrade", BindingFlags.Instance | BindingFlags.NonPublic);
-                        if (craftUpgradeField != null)
-                        {
-                            var cv = craftUpgradeField.GetValue(gui);
-                            if (cv is int v && v > 1) craftUpgradeVal = v;
-                        }
-                    }
-                    catch { }
-
-                    foreach (var req in resources)
-                    {
-                        try
-                        {
-                            var reqType = req.GetType();
-                            var nameObj = reqType.GetField("m_resItem", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)?.GetValue(req);
-                            string resName = null;
-                            if (nameObj != null)
-                            {
-                                var itemData = nameObj.GetType().GetField("m_itemData", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)?.GetValue(nameObj);
-                                var shared = itemData?.GetType().GetField("m_shared", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)?.GetValue(itemData);
-                                resName = shared?.GetType().GetField("m_name", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)?.GetValue(shared) as string;
-                            }
-                            if (string.IsNullOrEmpty(resName)) continue;
-
-                            int baseAmount = 0;
-                            try { var a = reqType.GetField("m_amount", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)?.GetValue(req); baseAmount = a != null ? Convert.ToInt32(a) : 0; } catch { baseAmount = 0; }
-                            int perLevel = 0;
-                            try { var pl = reqType.GetField("m_amountPerLevel", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)?.GetValue(req); perLevel = pl != null ? Convert.ToInt32(pl) : 0; } catch { perLevel = 0; }
-
-                            bool isUpgradeNow = _isUpgradeDetected || IsUpgradeOperation(gui, recipeToUse);
-                            int amount = baseAmount;
-                            if (isUpgradeNow && perLevel > 0)
-                            {
-                                int levels = 1;
-                                if (upgradeTargetItem != null)
-                                {
-                                    int finalQuality = recipeToUse.m_item?.m_itemData?.m_quality ?? selectedRecipe.m_item?.m_itemData?.m_quality ?? 0;
-                                    levels = Math.Max(1, finalQuality - upgradeTargetItem.m_quality);
-                                }
-                                else levels = Math.Max(1, craftUpgradeVal > 1 ? craftUpgradeVal : 1);
-                                amount = perLevel * levels;
-                            }
-
-                            if (amount <= 0) continue;
-                            if (string.Equals(resName, recipeToUse.m_item?.m_itemData?.m_shared?.m_name, StringComparison.OrdinalIgnoreCase)) continue;
-
-                            // diagnostic log
-                            try
-                            {
-                                string recipeKeyDbg = recipeToUse != null ? RecipeFingerprint(recipeToUse) : "null";
-                                LogInfo($"RemoveRequiredResourcesUpgrade-RecipeFallback-DBG: resource={resName} perLevel={perLevel} computedAmount={amount} recipe={recipeKeyDbg} targetHash={(upgradeTargetItem != null ? RuntimeHelpers.GetHashCode(upgradeTargetItem).ToString("X") : "null")}");
-                            }
-                            catch { }
-
-                            if (VERBOSE_DEBUG)
-                            {
-                                try
-                                {
-                                    var st = new System.Diagnostics.StackTrace(1, false);
-                                    var frame = st.GetFrame(0);
-                                    var caller = frame != null ? $"{frame.GetMethod()?.DeclaringType?.Name}.{frame.GetMethod()?.Name}" : "unknown";
-                                    LogInfo($"R3U-DBG beforeRecipeFallbackRemove: resource={resName} perLevel={perLevel} computedAmount={amount} caller={caller} time={DateTime.UtcNow:HH:mm:ss.fff}");
-                                }
-                                catch { }
-                            }
-
-                            int removed3 = RemoveAmountFromInventorySkippingTarget(inventory, upgradeTargetItem, resName, amount);
-                            LogInfo($"RemoveRequiredResourcesUpgrade-RecipeFallback: removed {removed3}/{amount} of {resName}");
-                        }
-                        catch { }
-                    }
-                }
-                catch { }
-                // ----- End original method body -----
             }
-            finally
+            catch (Exception ex)
             {
-                // Always clean up the recent removal key if this invocation added it
-                try
-                {
-                    if (removalKeyAdded && !string.IsNullOrEmpty(removalKey))
-                    {
-                        lock (_recentRemovalKeysLock)
-                        {
-                            _recentRemovalKeys.Remove(removalKey);
-                        }
-                    }
-                }
-                catch { }
+                LogWarning($"RemoveRequiredResourcesUpgrade exception: {ex}");
             }
         }
 
