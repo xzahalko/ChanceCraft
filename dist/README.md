@@ -10,6 +10,9 @@ Link: <a href="https://discord.gg/rKGzYaH4">https://discord.gg/rKGzYaH4</a>
 
 ## Release notes:
 
+### v1.1.3
+* Added possibility to set percentage for upgrading separatelly
+
 ### v1.1.2
 * Inicitial release
 * Set probability separately for armor, weapons annd ammo

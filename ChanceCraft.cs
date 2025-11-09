@@ -23,13 +23,16 @@ namespace ChanceCraft
     {
         public const string pluginID = "deep.ChanceCraft";
         public const string pluginName = "Chance Craft";
-        public const string pluginVersion = "1.1.2";
+        public const string pluginVersion = "1.1.3";
 
         private Harmony _harmony;
 
         private static ConfigEntry<float> weaponSuccessChance;
         private static ConfigEntry<float> armorSuccessChance;
         private static ConfigEntry<float> arrowSuccessChance;
+        private static ConfigEntry<float> weaponSuccessUpgrade;
+        private static ConfigEntry<float> armorSuccessUpgrade;
+        private static ConfigEntry<float> arrowSuccessUpgrade;
         private static ConfigEntry<bool> loggingEnabled;
 
         // Runtime shared state
@@ -66,7 +69,12 @@ namespace ChanceCraft
             armorSuccessChance = Config.Bind("General", "ArmorSuccessChance", 0.6f, new ConfigDescription("Chance to successfully craft armors (0.0 - 1.0)"));
             arrowSuccessChance = Config.Bind("General", "ArrowSuccessChance", 0.6f, new ConfigDescription("Chance to successfully craft arrows (0.0 - 1.0)"));
 
-            LogInfo($"ChanceCraft loaded: weapon={weaponSuccessChance.Value}, armor={armorSuccessChance.Value}, arrow={arrowSuccessChance.Value}");
+            // New upgrade-specific chances (separate from crafting)
+            weaponSuccessUpgrade = Config.Bind("General", "WeaponSuccessUpgrade", weaponSuccessChance.Value, new ConfigDescription("Chance to successfully upgrade weapons (0.0 - 1.0)"));
+            armorSuccessUpgrade = Config.Bind("General", "ArmorSuccessUpgrade", armorSuccessChance.Value, new ConfigDescription("Chance to successfully upgrade armors (0.0 - 1.0)"));
+            arrowSuccessUpgrade = Config.Bind("General", "ArrowSuccessUpgrade", arrowSuccessChance.Value, new ConfigDescription("Chance to successfully upgrade arrows (0.0 - 1.0)"));
+
+            LogInfo($"ChanceCraft loaded: craft weapon={weaponSuccessChance.Value}, armor={armorSuccessChance.Value}, arrow={arrowSuccessChance.Value}; upgrade weapon={weaponSuccessUpgrade.Value}, armor={armorSuccessUpgrade.Value}, arrow={arrowSuccessUpgrade.Value}");
             Game.isModded = true;
         }
 
@@ -487,7 +495,7 @@ namespace ChanceCraft
         [HarmonyPatch(typeof(InventoryGui), "DoCrafting")]
         static class InventoryGuiDoCraftingPatch
         {
-//            private static readonly Dictionary<Recipe, object> _savedResources = new Dictionary<Recipe, object>();
+            //            private static readonly Dictionary<Recipe, object> _savedResources = new Dictionary<Recipe, object>();
             private static readonly Dictionary<string, object> _savedResources = new Dictionary<string, object>();
             private static readonly object _savedResourcesLock = new object();
 
@@ -1370,35 +1378,43 @@ namespace ChanceCraft
 
             var player = Player.m_localPlayer;
 
-            float chance = 0.6f;
+            // Determine craft chance and upgrade chance separately
+            float craftChance = 0.6f;
+            float upgradeChance = 0.6f;
+
             if (itemType == ItemDrop.ItemData.ItemType.OneHandedWeapon ||
                 itemType == ItemDrop.ItemData.ItemType.TwoHandedWeapon ||
                 itemType == ItemDrop.ItemData.ItemType.Bow ||
                 itemType == ItemDrop.ItemData.ItemType.TwoHandedWeaponLeft)
             {
-                chance = weaponSuccessChance.Value;
+                craftChance = weaponSuccessChance.Value;
+                upgradeChance = weaponSuccessUpgrade.Value;
             }
             else if (itemType == ItemDrop.ItemData.ItemType.Shield ||
                      itemType == ItemDrop.ItemData.ItemType.Helmet ||
                      itemType == ItemDrop.ItemData.ItemType.Chest ||
                      itemType == ItemDrop.ItemData.ItemType.Legs)
             {
-                chance = armorSuccessChance.Value;
+                craftChance = armorSuccessChance.Value;
+                upgradeChance = armorSuccessUpgrade.Value;
             }
             else if (itemType == ItemDrop.ItemData.ItemType.Ammo)
             {
-                chance = arrowSuccessChance.Value;
+                craftChance = arrowSuccessChance.Value;
+                upgradeChance = arrowSuccessUpgrade.Value;
             }
 
             int qualityLevel = selectedRecipe.m_item?.m_itemData?.m_quality ?? 1;
             float qualityScalePerLevel = 0.05f;
             float qualityFactor = 1f + qualityScalePerLevel * Math.Max(0, qualityLevel - 1);
-            chance = Mathf.Clamp01(chance * qualityFactor);
 
-            float randVal = UnityEngine.Random.value;
+            float craftChanceAdjusted = Mathf.Clamp01(craftChance * qualityFactor);
+            float upgradeChanceAdjusted = Mathf.Clamp01(upgradeChance * qualityFactor);
 
             // Use consistent, conservative helper for upgrade detection
             bool isUpgradeNow = ShouldTreatAsUpgrade(gui, selectedRecipe, isUpgradeCall);
+
+            float randVal = UnityEngine.Random.value;
 
             bool suppressedThisOperation = IsDoCraft;
             try
@@ -1427,7 +1443,8 @@ namespace ChanceCraft
             try
             {
                 var recipeKeyDbg = selectedRecipe != null ? RecipeFingerprint(selectedRecipe) : "null";
-                LogInfo($"TrySpawnCraftEffect-DBG: recipe={recipeKeyDbg} itemType={itemType} quality={qualityLevel} chance={chance:F3} randVal={randVal:F3} isUpgradeNow={isUpgradeNow} suppressedThisOperation={suppressedThisOperation}");
+                float chosenChance = isUpgradeNow ? upgradeChanceAdjusted : craftChanceAdjusted;
+                LogInfo($"TrySpawnCraftEffect-DBG: recipe={recipeKeyDbg} itemType={itemType} quality={qualityLevel} craftChance={craftChanceAdjusted:F3} upgradeChance={upgradeChanceAdjusted:F3} chosenChance={chosenChance:F3} randVal={randVal:F3} isUpgradeNow={isUpgradeNow} suppressedThisOperation={suppressedThisOperation}");
             }
             catch { }
 
@@ -1440,11 +1457,13 @@ namespace ChanceCraft
                 int ugGuiReqCount = _upgradeGuiRequirements != null ? _upgradeGuiRequirements.Count : 0;
                 bool guiHasUpgradeRecipe = false;
                 try { guiHasUpgradeRecipe = GetUpgradeRecipeFromGui(gui) != null; } catch { guiHasUpgradeRecipe = false; }
-                LogInfo($"TSCE-DBG-DETAIL: isUpgradeCall={isUpgradeCall} _isUpgradeDetected={_isUpgradeDetected} IsUpgradeOperation={IsUpgradeOperation(gui, selectedRecipe)} guiHasUpgradeRecipe={guiHasUpgradeRecipe} _upgradeGuiRecipe={ugGuiRecipeKey} _upgradeRecipe={ugRecipeKey} _upgradeTargetItem={ugTargetHash} _upgradeGuiRequirementsCount={ugGuiReqCount}");
+                LogInfo($"TSCE-DBG-DETAIL: isUpgradeCall={isUpgradeCall} _isUpgradeDetected={_isUpgradeDetected} IsUpgradeOperation={IsUpgradeOperation(gui, selectedRecipe)} guiHasUpgradeRecipe={guiHasUpgradeRecipe} _upgradeGuiRecipe={ugGuiRecipeKey} _upgradeRecipe={ugRecipeKey} _upgradeTargetHash={ugTargetHash} _upgradeGuiReqCount={ugGuiReqCount}");
             }
             catch { }
 
-            if (randVal <= chance)
+            float finalChosenChance = isUpgradeNow ? upgradeChanceAdjusted : craftChanceAdjusted;
+
+            if (randVal <= finalChosenChance)
             {
                 // SUCCESS
                 var craftingStationField = typeof(InventoryGui).GetField("currentCraftingStation", BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
@@ -1761,7 +1780,11 @@ namespace ChanceCraft
                                 }
                                 catch { }
 
-                                try { LogInfo($"TrySpawnCraftEffect-DBG RevertCheck: resultName={resultName} finalQuality={finalQuality} expectedPreQuality={expectedPreQuality} preSnapshotCount={(_preCraftSnapshot != null ? _preCraftSnapshot.Count : 0)} preSnapshotDataCount={(_preCraftSnapshotData != null ? _preCraftSnapshotData.Count : 0)} preHashCount={(_preCraftSnapshotHashQuality != null ? _preCraftSnapshotHashQuality.Count : 0)}"); } catch { }
+                                try
+                                {
+                                    LogInfo($"TrySpawnCraftEffect-DBG RevertCheck: resultName={resultName} finalQuality={finalQuality} expectedPreQuality={expectedPreQuality} preSnapshotCount={_preCraftSnapshotData?.Count}");
+                                }
+                                catch { }
 
                                 var inv = Player.m_localPlayer?.GetInventory();
                                 var all = inv?.GetAllItems();
@@ -1777,7 +1800,11 @@ namespace ChanceCraft
                                             int curQ = it.m_quality;
                                             if (curQ > expectedPreQuality && !wasPre)
                                             {
-                                                try { LogInfo($"TrySpawnCraftEffect-DBG FORCED REVERT: itemHash={RuntimeHelpers.GetHashCode(it):X} name={it.m_shared.m_name} oldQ={it.m_quality} -> newQ={expectedPreQuality}"); } catch { }
+                                                try
+                                                {
+                                                    LogInfo($"TrySpawnCraftEffect-DBG RevertCheck: resultName={resultName} finalQuality={finalQuality} expectedPreQuality={expectedPreQuality} preSnapshotCount={_preCraftSnapshotData?.Count}");
+                                                }
+                                                catch { }
                                                 it.m_quality = expectedPreQuality;
                                                 try
                                                 {
@@ -1825,9 +1852,9 @@ namespace ChanceCraft
                             if (inv != null)
                             {
                                 var all = inv.GetAllItems();
-                                woodBefore = all.Where(it => it != null && it.m_shared != null && string.Equals(it.m_shared.m_name, "$item_wood", StringComparison.OrdinalIgnoreCase)).Sum(it => it.m_stack);
-                                scrapBefore = all.Where(it => it != null && it.m_shared != null && string.Equals(it.m_shared.m_name, "$item_leatherscraps", StringComparison.OrdinalIgnoreCase)).Sum(it => it.m_stack);
-                                hideBefore = all.Where(it => it != null && it.m_shared != null && string.Equals(it.m_shared.m_name, "$item_deerhide", StringComparison.OrdinalIgnoreCase)).Sum(it => it.m_stack);
+                                try { woodBefore = all.Where(it => it != null && it.m_shared != null && string.Equals(it.m_shared.m_name, "$item_wood", StringComparison.OrdinalIgnoreCase)).Sum(it => it.m_stack); } catch { }
+                                try { scrapBefore = all.Where(it => it != null && it.m_shared != null && string.Equals(it.m_shared.m_name, "$item_leatherscraps", StringComparison.OrdinalIgnoreCase)).Sum(it => it.m_stack); } catch { }
+                                try { hideBefore = all.Where(it => it != null && it.m_shared != null && string.Equals(it.m_shared.m_name, "$item_deerhide", StringComparison.OrdinalIgnoreCase)).Sum(it => it.m_stack); } catch { }
                             }
                             LogInfo($"TrySpawnCraftEffect-DBG BEFORE removal: targetHash={targetHash} wood={woodBefore} scraps={scrapBefore} hides={hideBefore} didRevertAny={didRevertAny}");
                         }
@@ -2199,7 +2226,7 @@ namespace ChanceCraft
                             {
                                 try
                                 {
-                                    LogInfo($"RemoveAmountFromInventoryLocal-REMOVE: removed={toRemove} from stackHash={RuntimeHelpers.GetHashCode(it):X} name={it.m_shared.m_name} q={it.m_quality} beforeStack={before} afterStack={it.m_stack}");
+                                    LogInfo($"RemoveAmountFromInventoryLocal-REMOVE: removed={toRemove} from stackHash={RuntimeHelpers.GetHashCode(it):X} name={it.m_shared.m_name} q={it.m_quality} before={before} after={it.m_stack}");
                                 }
                                 catch { }
                             }
@@ -2287,7 +2314,7 @@ namespace ChanceCraft
                     try
                     {
                         var rq = string.Join(", ", validReqs.Select(v => $"{v.name}:{v.amount}"));
-                        LogInfo($"RemoveRequiredResources-DBG: isUpgradeDetected={_isUpgradeDetected} IsUpgradeOperation={IsUpgradeOperation(gui, selectedRecipe)} craftUpgrade={craftUpgrade} craftedFlag={crafted} computedReqs=[{rq}] skipRemovingResultResource={skipRemovingResultResource}");
+                        LogInfo($"RemoveRequiredResources-DBG: isUpgradeDetected={_isUpgradeDetected} IsUpgradeOperation={IsUpgradeOperation(gui, selectedRecipe)} craftUpgrade={craftUpgrade} crafted={crafted} reqs=[{rq}]");
                     }
                     catch { }
                 }
@@ -2491,7 +2518,7 @@ namespace ChanceCraft
                         int before = it.m_stack;
                         it.m_stack -= toRemove;
                         remaining -= toRemove;
-                        try { LogInfo($"RemoveAmountFromInventorySkippingTarget-REMOVE: removed={toRemove} from stackHash={RuntimeHelpers.GetHashCode(it):X} name={it.m_shared.m_name} q={it.m_quality} beforeStack={before} afterStack={it.m_stack}"); } catch { }
+                        try { LogInfo($"RemoveAmountFromInventorySkippingTarget-REMOVE: removed={toRemove} from stackHash={RuntimeHelpers.GetHashCode(it):X} name={it.m_shared.m_name} q={it.m_quality} before={before} after={it.m_stack}"); } catch { }
                         if (it.m_stack <= 0)
                         {
                             try { inventory.RemoveItem(it); } catch { }
@@ -2510,7 +2537,7 @@ namespace ChanceCraft
                             int before = it.m_stack;
                             it.m_stack -= toRemove;
                             remaining -= toRemove;
-                            try { LogInfo($"RemoveAmountFromInventorySkippingTarget-REMOVE-FALLBACK: removed={toRemove} from stackHash={RuntimeHelpers.GetHashCode(it):X} name={it.m_shared.m_name} q={it.m_quality} beforeStack={before} afterStack={it.m_stack}"); } catch { }
+                            try { LogInfo($"RemoveAmountFromInventorySkippingTarget-REMOVE-FALLBACK: removed={toRemove} from stackHash={RuntimeHelpers.GetHashCode(it):X} name={it.m_shared.m_name} q={it.m_quality} before={before} after={it.m_stack}"); } catch { }
                             if (it.m_stack <= 0)
                             {
                                 try { inventory.RemoveItem(it); } catch { }
