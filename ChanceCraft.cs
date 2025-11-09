@@ -231,19 +231,19 @@ namespace ChanceCraft
                         object cv = craftUpgradeField.GetValue(gui);
                         if (cv is int v && v > 1)
                         {
-                            UnityEngine.Debug.LogWarning($"[ChanceCraft] IsUpgradeOperation: m_craftUpgrade={v} -> upgrade detected");
+                            BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogWarning($"[ChanceCraft] IsUpgradeOperation: m_craftUpgrade={v} -> upgrade detected");
                             return true;
                         }
                     }
                     catch (Exception ex)
                     {
-                        UnityEngine.Debug.LogWarning($"[ChanceCraft] IsUpgradeOperation craftUpgrade check exception: {ex}");
+                        BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogWarning($"[ChanceCraft] IsUpgradeOperation craftUpgrade check exception: {ex}");
                     }
                 }
             }
             catch (Exception ex)
             {
-                UnityEngine.Debug.LogWarning($"[ChanceCraft] IsUpgradeOperation: craftUpgrade reflection outer exception: {ex}");
+                BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogWarning($"[ChanceCraft] IsUpgradeOperation: craftUpgrade reflection outer exception: {ex}");
             }
 
             try
@@ -261,7 +261,7 @@ namespace ChanceCraft
                             if (it == null || it.m_shared == null) continue;
                             if (it.m_shared.m_name == craftedName && it.m_quality < craftedQuality)
                             {
-                                UnityEngine.Debug.LogWarning($"[ChanceCraft] IsUpgradeOperation: found lower-quality inventory item {ItemInfo(it)} -> upgrade detected");
+                                BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogWarning($"[ChanceCraft] IsUpgradeOperation: found lower-quality inventory item {ItemInfo(it)} -> upgrade detected");
                                 return true;
                             }
                         }
@@ -270,20 +270,20 @@ namespace ChanceCraft
             }
             catch (Exception ex)
             {
-                UnityEngine.Debug.LogWarning($"[ChanceCraft] IsUpgradeOperation inventory check exception: {ex}");
+                BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogWarning($"[ChanceCraft] IsUpgradeOperation inventory check exception: {ex}");
             }
 
             try
             {
                 if (RecipeConsumesResult(recipe))
                 {
-                    UnityEngine.Debug.LogWarning("[ChanceCraft] IsUpgradeOperation: recipe consumes its result -> upgrade detected.");
+                    BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogWarning("[ChanceCraft] IsUpgradeOperation: recipe consumes its result -> upgrade detected.");
                     return true;
                 }
             }
             catch (Exception ex)
             {
-                UnityEngine.Debug.LogWarning($"[ChanceCraft] IsUpgradeOperation RecipeConsumesResult exception: {ex}");
+                BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogWarning($"[ChanceCraft] IsUpgradeOperation RecipeConsumesResult exception: {ex}");
             }
 
             return false;
@@ -310,7 +310,8 @@ namespace ChanceCraft
                     var val = TryGet(c);
                     if (val is ItemDrop.ItemData idata)
                     {
-                        UnityEngine.Debug.LogWarning($"[ChanceCraft] GetSelectedInventoryItem: got ItemData from field '{c}': {ItemInfo(idata)}");
+                        if (_loggingEnabled.Value)
+                            BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogDebug($"[ChanceCraft] GetSelectedInventoryItem: got ItemData from field '{c}': {ItemInfo(idata)}");
                         return idata;
                     }
                     if (val != null)
@@ -322,7 +323,8 @@ namespace ChanceCraft
                             var inner = innerField.GetValue(val);
                             if (inner is ItemDrop.ItemData ii)
                             {
-                                UnityEngine.Debug.LogWarning($"[ChanceCraft] GetSelectedInventoryItem: got inner ItemData from '{c}.m_item': {ItemInfo(ii)}");
+                                if (_loggingEnabled.Value)
+                                    BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogDebug($"[ChanceCraft] GetSelectedInventoryItem: got inner ItemData from '{c}.m_item': {ItemInfo(ii)}");
                                 return ii;
                             }
                         }
@@ -343,7 +345,8 @@ namespace ChanceCraft
                         var all = inv.GetAllItems();
                         if (idx >= 0 && idx < all.Count)
                         {
-                            UnityEngine.Debug.LogWarning($"[ChanceCraft] GetSelectedInventoryItem: inferred selected by slot idx {idx}: {ItemInfo(all[idx])}");
+                            if (_loggingEnabled.Value)
+                                BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogDebug($"[ChanceCraft] GetSelectedInventoryItem: inferred selected by slot idx {idx}: {ItemInfo(all[idx])}");
                             return all[idx];
                         }
                     }
@@ -386,12 +389,14 @@ namespace ChanceCraft
                         {
                             foundRecipe = r;
                             foundPath = path;
-                            UnityEngine.Debug.LogWarning($"[ChanceCraft] TryExtractRecipeFromWrapper: found Recipe at path '{path}': {RecipeInfo(r)} (excluded? False)");
+                            if (_loggingEnabled.Value)
+                                BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogDebug($"[ChanceCraft] TryExtractRecipeFromWrapper: found Recipe at path '{path}': {RecipeInfo(r)} (excluded? False)");
                             return true;
                         }
                         else
                         {
-                            UnityEngine.Debug.LogWarning($"[ChanceCraft] TryExtractRecipeFromWrapper: found Recipe at path '{path}' but it matches excluded recipe -> skipping");
+                            if (_loggingEnabled.Value)
+                                BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogDebug($"[ChanceCraft] TryExtractRecipeFromWrapper: found Recipe at path '{path}' but it matches excluded recipe -> skipping");
                         }
                     }
 
@@ -417,7 +422,8 @@ namespace ChanceCraft
                                 {
                                     foundRecipe = maybe;
                                     foundPath = $"{path}.{f.Name}";
-                                    UnityEngine.Debug.LogWarning($"[ChanceCraft] TryExtractRecipeFromWrapper: found Recipe field '{f.Name}' at path '{foundPath}' => {RecipeInfo(foundRecipe)}");
+                                    if (_loggingEnabled.Value)
+                                        BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogDebug($"[ChanceCraft] TryExtractRecipeFromWrapper: found Recipe field '{f.Name}' at path '{foundPath}' => {RecipeInfo(foundRecipe)}");
                                     return true;
                                 }
                             }
@@ -438,7 +444,8 @@ namespace ChanceCraft
                                     {
                                         foundRecipe = rr;
                                         foundPath = $"{path}.{f.Name}[{idx}]";
-                                        UnityEngine.Debug.LogWarning($"[ChanceCraft] TryExtractRecipeFromWrapper: found Recipe in enumerable '{f.Name}' at '{foundPath}' => {RecipeInfo(foundRecipe)}");
+                                        if (_loggingEnabled.Value)
+                                            BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogDebug($"[ChanceCraft] TryExtractRecipeFromWrapper: found Recipe in enumerable '{f.Name}' at '{foundPath}' => {RecipeInfo(foundRecipe)}");
                                         return true;
                                     }
                                     if (elem != null && idx < 5)
@@ -471,7 +478,8 @@ namespace ChanceCraft
                                 {
                                     foundRecipe = maybe;
                                     foundPath = $"{path}.{p.Name}";
-                                    UnityEngine.Debug.LogWarning($"[ChanceCraft] TryExtractRecipeFromWrapper: found Recipe property '{p.Name}' at path '{foundPath}' => {RecipeInfo(foundRecipe)}");
+                                    if (_loggingEnabled.Value)
+                                        BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogDebug($"[ChanceCraft] TryExtractRecipeFromWrapper: found Recipe property '{p.Name}' at path '{foundPath}' => {RecipeInfo(foundRecipe)}");
                                     return true;
                                 }
                             }
@@ -492,7 +500,8 @@ namespace ChanceCraft
                                     {
                                         foundRecipe = rr;
                                         foundPath = $"{path}.{p.Name}[{idx}]";
-                                        UnityEngine.Debug.LogWarning($"[ChanceCraft] TryExtractRecipeFromWrapper: found Recipe in enumerable property '{p.Name}' at '{foundPath}' => {RecipeInfo(foundRecipe)}");
+                                        if (_loggingEnabled.Value)
+                                            BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogDebug($"[ChanceCraft] TryExtractRecipeFromWrapper: found Recipe in enumerable property '{p.Name}' at '{foundPath}' => {RecipeInfo(foundRecipe)}");
                                         return true;
                                     }
                                     if (elem != null && idx < 5)
@@ -512,7 +521,7 @@ namespace ChanceCraft
             }
             catch (Exception ex)
             {
-                UnityEngine.Debug.LogWarning($"[ChanceCraft] TryExtractRecipeFromWrapper exception: {ex}");
+                BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogWarning($"[ChanceCraft] TryExtractRecipeFromWrapper exception: {ex}");
             }
             return false;
         }
@@ -540,7 +549,8 @@ namespace ChanceCraft
                             var val = f.GetValue(gui);
                             if (val is Recipe r)
                             {
-                                UnityEngine.Debug.LogWarning($"[ChanceCraft] GetUpgradeRecipeFromGui: field '{name}' is Recipe -> {RecipeInfo(r)}");
+                                if (_loggingEnabled.Value)
+                                    BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogDebug($"[ChanceCraft] GetUpgradeRecipeFromGui: field '{name}' is Recipe -> {RecipeInfo(r)}");
                                 return r;
                             }
                             if (val != null)
@@ -549,7 +559,8 @@ namespace ChanceCraft
                                 string path;
                                 if (TryExtractRecipeFromWrapper(val, null, out inner, out path))
                                 {
-                                    UnityEngine.Debug.LogWarning($"[ChanceCraft] GetUpgradeRecipeFromGui: extracted inner Recipe from field '{name}' at path '{path}' -> {RecipeInfo(inner)}");
+                                    if (_loggingEnabled.Value)
+                                        BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogDebug($"[ChanceCraft] GetUpgradeRecipeFromGui: extracted inner Recipe from field '{name}' at path '{path}' -> {RecipeInfo(inner)}");
                                     return inner;
                                 }
                                 var prop = val.GetType().GetProperty("Recipe", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
@@ -558,7 +569,8 @@ namespace ChanceCraft
                                     var r2 = prop.GetValue(val) as Recipe;
                                     if (r2 != null)
                                     {
-                                        UnityEngine.Debug.LogWarning($"[ChanceCraft] GetUpgradeRecipeFromGui: field '{name}'.Recipe -> {RecipeInfo(r2)}");
+                                        if (_loggingEnabled.Value)
+                                            BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogDebug($"[ChanceCraft] GetUpgradeRecipeFromGui: field '{name}'.Recipe -> {RecipeInfo(r2)}");
                                         return r2;
                                     }
                                 }
@@ -571,7 +583,8 @@ namespace ChanceCraft
                             var val2 = propInfo.GetValue(gui);
                             if (val2 is Recipe r3)
                             {
-                                UnityEngine.Debug.LogWarning($"[ChanceCraft] GetUpgradeRecipeFromGui: property '{name}' is Recipe -> {RecipeInfo(r3)}");
+                                if (_loggingEnabled.Value)
+                                    BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogDebug($"[ChanceCraft] GetUpgradeRecipeFromGui: property '{name}' is Recipe -> {RecipeInfo(r3)}");
                                 return r3;
                             }
                             if (val2 != null)
@@ -580,7 +593,8 @@ namespace ChanceCraft
                                 string path3;
                                 if (TryExtractRecipeFromWrapper(val2, null, out inner3, out path3))
                                 {
-                                    UnityEngine.Debug.LogWarning($"[ChanceCraft] GetUpgradeRecipeFromGui: extracted inner Recipe from prop '{name}' at path '{path3}' -> {RecipeInfo(inner3)}");
+                                    if (_loggingEnabled.Value)
+                                        BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogDebug($"[ChanceCraft] GetUpgradeRecipeFromGui: extracted inner Recipe from prop '{name}' at path '{path3}' -> {RecipeInfo(inner3)}");
                                     return inner3;
                                 }
                                 var p2 = val2.GetType().GetProperty("Recipe", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
@@ -592,7 +606,7 @@ namespace ChanceCraft
                             }
                         }
                     }
-                    catch (Exception ex) { UnityEngine.Debug.LogWarning($"[ChanceCraft] GetUpgradeRecipeFromGui: candidate '{name}' check threw: {ex}"); }
+                    BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogWarning($"[ChanceCraft] GetUpgradeRecipeFromGui: candidate '{name}' check threw: {ex}");
                 }
 
                 try
@@ -603,7 +617,8 @@ namespace ChanceCraft
                         var wrapper = selectedRecipeField.GetValue(gui);
                         if (wrapper != null)
                         {
-                            UnityEngine.Debug.LogWarning($"[ChanceCraft] GetUpgradeRecipeFromGui: inspecting m_selectedRecipe wrapper type={wrapper.GetType().FullName}");
+                            if (_loggingEnabled.Value)
+                                BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogDebug($"[ChanceCraft] GetUpgradeRecipeFromGui: inspecting m_selectedRecipe wrapper type={wrapper.GetType().FullName}");
                             Recipe inner;
                             string path;
                             Recipe wrapperSelected = null;
@@ -616,7 +631,8 @@ namespace ChanceCraft
 
                             if (TryExtractRecipeFromWrapper(wrapper, wrapperSelected, out inner, out path))
                             {
-                                UnityEngine.Debug.LogWarning($"[ChanceCraft] GetUpgradeRecipeFromGui: extracted Recipe from m_selectedRecipe wrapper at '{path}' -> {RecipeInfo(inner)}");
+                                if (_loggingEnabled.Value)
+                                    BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogDebug($"[ChanceCraft] GetUpgradeRecipeFromGui: extracted Recipe from m_selectedRecipe wrapper at '{path}' -> {RecipeInfo(inner)}");
                                 return inner;
                             }
                         }
@@ -624,7 +640,8 @@ namespace ChanceCraft
                 }
                 catch (Exception ex)
                 {
-                    UnityEngine.Debug.LogWarning($"[ChanceCraft] GetUpgradeRecipeFromGui: m_selectedRecipe-wrapper inspection threw: {ex}");
+                    if (_loggingEnabled.Value)
+                        BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogDebug($"[ChanceCraft] GetUpgradeRecipeFromGui: m_selectedRecipe-wrapper inspection threw: {ex}");
                 }
 
                 try
@@ -638,14 +655,16 @@ namespace ChanceCraft
                             if (v == null) continue;
                             if (v is Recipe rr)
                             {
-                                UnityEngine.Debug.LogWarning($"[ChanceCraft] GetUpgradeRecipeFromGui: fallback found Recipe in field '{f.Name}' -> {RecipeInfo(rr)}");
+                                if (_loggingEnabled.Value)
+                                    BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogDebug($"[ChanceCraft] GetUpgradeRecipeFromGui: fallback found Recipe in field '{f.Name}' -> {RecipeInfo(rr)}");
                                 return rr;
                             }
                             Recipe inner;
                             string path;
                             if (TryExtractRecipeFromWrapper(v, null, out inner, out path))
                             {
-                                UnityEngine.Debug.LogWarning($"[ChanceCraft] GetUpgradeRecipeFromGui: fallback extracted Recipe from field '{f.Name}' at '{path}' -> {RecipeInfo(inner)}");
+                                if (_loggingEnabled.Value)
+                                    BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogDebug($"[ChanceCraft] GetUpgradeRecipeFromGui: fallback extracted Recipe from field '{f.Name}' at '{path}' -> {RecipeInfo(inner)}");
                                 return inner;
                             }
                         }
@@ -654,11 +673,11 @@ namespace ChanceCraft
                 }
                 catch { }
 
-                UnityEngine.Debug.LogWarning("[ChanceCraft] GetUpgradeRecipeFromGui: no GUI-wrapped upgrade recipe found (returned null).");
+                BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogWarning("[ChanceCraft] GetUpgradeRecipeFromGui: no GUI-wrapped upgrade recipe found (returned null).");
             }
             catch (Exception ex)
             {
-                UnityEngine.Debug.LogWarning($"[ChanceCraft] GetUpgradeRecipeFromGui exception: {ex}");
+                BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogWarning($"[ChanceCraft] GetUpgradeRecipeFromGui exception: {ex}");
             }
             return null;
         }
@@ -681,7 +700,7 @@ namespace ChanceCraft
                     if (upgradeTargetItem != null && ReferenceEquals(it, upgradeTargetItem)) continue;
                     if (it.m_shared.m_name != resourceName) continue;
                     int toRemove = Math.Min(it.m_stack, remaining);
-                    UnityEngine.Debug.LogWarning($"[ChanceCraft] RemoveAmountFromInventorySkippingTarget: removing {toRemove} from {ItemInfo(it)} matching exact '{resourceName}'");
+                    BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogWarning($"[ChanceCraft] RemoveAmountFromInventorySkippingTarget: removing {toRemove} from {ItemInfo(it)} matching exact '{resourceName}'");
                     it.m_stack -= toRemove;
                     remaining -= toRemove;
                     if (it.m_stack <= 0)
@@ -698,7 +717,7 @@ namespace ChanceCraft
                     if (upgradeTargetItem != null && ReferenceEquals(it, upgradeTargetItem)) continue;
                     if (!string.Equals(it.m_shared.m_name, resourceName, StringComparison.OrdinalIgnoreCase)) continue;
                     int toRemove = Math.Min(it.m_stack, remaining);
-                    UnityEngine.Debug.LogWarning($"[ChanceCraft] RemoveAmountFromInventorySkippingTarget: removing {toRemove} from {ItemInfo(it)} matching case-insensitive '{resourceName}'");
+                    BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogWarning($"[ChanceCraft] RemoveAmountFromInventorySkippingTarget: removing {toRemove} from {ItemInfo(it)} matching case-insensitive '{resourceName}'");
                     it.m_stack -= toRemove;
                     remaining -= toRemove;
                     if (it.m_stack <= 0) { try { inventory.RemoveItem(it); } catch { } }
@@ -714,7 +733,7 @@ namespace ChanceCraft
                     if (name == null || resourceName == null) continue;
                     if (name.IndexOf(resourceName, StringComparison.OrdinalIgnoreCase) < 0) continue;
                     int toRemove = Math.Min(it.m_stack, remaining);
-                    UnityEngine.Debug.LogWarning($"[ChanceCraft] RemoveAmountFromInventorySkippingTarget: removing {toRemove} from {ItemInfo(it)} containing '{resourceName}'");
+                    BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogWarning($"[ChanceCraft] RemoveAmountFromInventorySkippingTarget: removing {toRemove} from {ItemInfo(it)} containing '{resourceName}'");
                     it.m_stack -= toRemove;
                     remaining -= toRemove;
                     if (it.m_stack <= 0) { try { inventory.RemoveItem(it); } catch { } }
@@ -730,7 +749,7 @@ namespace ChanceCraft
                     if (name == null || resourceName == null) continue;
                     if (resourceName.IndexOf(name, StringComparison.OrdinalIgnoreCase) < 0) continue;
                     int toRemove = Math.Min(it.m_stack, remaining);
-                    UnityEngine.Debug.LogWarning($"[ChanceCraft] RemoveAmountFromInventorySkippingTarget: removing {toRemove} from {ItemInfo(it)} reverse-containing '{resourceName}'");
+                    BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogWarning($"[ChanceCraft] RemoveAmountFromInventorySkippingTarget: removing {toRemove} from {ItemInfo(it)} reverse-containing '{resourceName}'");
                     it.m_stack -= toRemove;
                     remaining -= toRemove;
                     if (it.m_stack <= 0) { try { inventory.RemoveItem(it); } catch { } }
@@ -738,20 +757,21 @@ namespace ChanceCraft
             }
             catch (Exception ex)
             {
-                UnityEngine.Debug.LogWarning($"[ChanceCraft] RemoveAmountFromInventorySkippingTarget: exception during attempts: {ex}");
+                BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogWarning($"[ChanceCraft] RemoveAmountFromInventorySkippingTarget: exception during attempts: {ex}");
             }
 
             if (remaining > 0)
             {
                 try
                 {
-                    UnityEngine.Debug.LogWarning($"[ChanceCraft] RemoveAmountFromInventorySkippingTarget: fallback RemoveItem by name '{resourceName}' remaining={remaining}");
+                    if (_loggingEnabled.Value)
+                        BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogDebug($"[ChanceCraft] RemoveAmountFromInventorySkippingTarget: fallback RemoveItem by name '{resourceName}' remaining={remaining}");
                     inventory.RemoveItem(resourceName, remaining);
                     remaining = 0;
                 }
                 catch (Exception ex)
                 {
-                    UnityEngine.Debug.LogWarning($"[ChanceCraft] RemoveAmountFromInventorySkippingTarget: RemoveItem exception: {ex}");
+                    BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogWarning($"[ChanceCraft] RemoveAmountFromInventorySkippingTarget: RemoveItem exception: {ex}");
                 }
             }
 
@@ -768,7 +788,7 @@ namespace ChanceCraft
                 if (string.IsNullOrEmpty(resultName)) return null;
                 if (ObjectDB.instance == null)
                 {
-                    UnityEngine.Debug.LogWarning("[ChanceCraft] FindBestUpgradeRecipeCandidate: ObjectDB.instance is null");
+                    BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogWarning("[ChanceCraft] FindBestUpgradeRecipeCandidate: ObjectDB.instance is null");
                     return null;
                 }
 
@@ -844,18 +864,20 @@ namespace ChanceCraft
 
                 if (best != null)
                 {
-                    UnityEngine.Debug.LogWarning($"[ChanceCraft] FindBestUpgradeRecipeCandidate: selected candidate {RecipeInfo(best)} score={bestScore}");
+                    if (_loggingEnabled.Value)
+                        BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogDebug($"[ChanceCraft] FindBestUpgradeRecipeCandidate: selected candidate {RecipeInfo(best)} score={bestScore}");
                 }
                 else
                 {
-                    UnityEngine.Debug.LogWarning($"[ChanceCraft] FindBestUpgradeRecipeCandidate: no candidate found for result '{craftRecipe.m_item?.m_itemData?.m_shared?.m_name}'");
+                    if (_loggingEnabled.Value)
+                        BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogDebug($"[ChanceCraft] FindBestUpgradeRecipeCandidate: no candidate found for result '{craftRecipe.m_item?.m_itemData?.m_shared?.m_name}'");
                 }
 
                 return best;
             }
             catch (Exception ex)
             {
-                UnityEngine.Debug.LogWarning($"[ChanceCraft] FindBestUpgradeRecipeCandidate exception: {ex}");
+                BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogWarning($"[ChanceCraft] FindBestUpgradeRecipeCandidate exception: {ex}");
                 return null;
             }
         }
@@ -905,14 +927,17 @@ namespace ChanceCraft
                     }
                     if (selectedRecipe == null) return;
 
-                    UnityEngine.Debug.LogWarning($"[ChanceCraft] Prefix: selectedRecipe = {RecipeInfo(selectedRecipe)}");
+                    if (_loggingEnabled.Value)
+                        BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogDebug($"[ChanceCraft] Prefix: selectedRecipe = {RecipeInfo(selectedRecipe)}");
 
                     // Early discovery of GUI-wrapped recipe & DB candidate
                     try
                     {
                         var selKey = RecipeFingerprint(selectedRecipe);
-                        UnityEngine.Debug.LogWarning($"[ChanceCraft] Prefix-DBG: selectedRecipe fingerprint={selKey}");
-                        UnityEngine.Debug.LogWarning($"[ChanceCraft] Prefix-DBG: selectedRecipe consumesResult={RecipeConsumesResult(selectedRecipe)}");
+                        if (_loggingEnabled.Value)
+                            BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogDebug($"[ChanceCraft] Prefix-DBG: selectedRecipe fingerprint={selKey}");
+                        if (_loggingEnabled.Value)
+                            BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogDebug($"[ChanceCraft] Prefix-DBG: selectedRecipe consumesResult={RecipeConsumesResult(selectedRecipe)}");
 
                         if (value != null)
                         {
@@ -920,13 +945,15 @@ namespace ChanceCraft
                             string extractedPath;
                             if (TryExtractRecipeFromWrapper(value, selectedRecipe, out extractedFromWrapper, out extractedPath))
                             {
-                                UnityEngine.Debug.LogWarning($"[ChanceCraft] Prefix-DBG: extracted Recipe from selectedRecipe wrapper at '{extractedPath}' -> {RecipeInfo(extractedFromWrapper)}");
+                                if (_loggingEnabled.Value)
+                                    BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogDebug($"[ChanceCraft] Prefix-DBG: extracted Recipe from selectedRecipe wrapper at '{extractedPath}' -> {RecipeInfo(extractedFromWrapper)}");
                                 _upgradeGuiRecipe = extractedFromWrapper;
                                 try
                                 {
                                     var keyg = RecipeFingerprint(extractedFromWrapper);
                                     lock (_suppressedRecipeKeysLock) { _suppressedRecipeKeys.Add(keyg); }
-                                    UnityEngine.Debug.LogWarning($"[ChanceCraft] Prefix-DBG: recorded GUI-wrapped recipe fingerprint {keyg}");
+                                    if (_loggingEnabled.Value)
+                                        BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogDebug($"[ChanceCraft] Prefix-DBG: recorded GUI-wrapped recipe fingerprint {keyg}");
                                 }
                                 catch { }
                             }
@@ -935,19 +962,22 @@ namespace ChanceCraft
                                 var earlyGuiRecipe = GetUpgradeRecipeFromGui(__instance);
                                 if (earlyGuiRecipe != null)
                                 {
-                                    UnityEngine.Debug.LogWarning($"[ChanceCraft] Prefix-DBG: earlyGuiRecipe detected = {RecipeInfo(earlyGuiRecipe)} (hash={earlyGuiRecipe?.GetHashCode():X8})");
+                                    if (_loggingEnabled.Value)
+                                        BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogDebug($"[ChanceCraft] Prefix-DBG: earlyGuiRecipe detected = {RecipeInfo(earlyGuiRecipe)} (hash={earlyGuiRecipe?.GetHashCode():X8})");
                                     _upgradeGuiRecipe = earlyGuiRecipe;
                                     try
                                     {
                                         var keyg = RecipeFingerprint(earlyGuiRecipe);
                                         lock (_suppressedRecipeKeysLock) { _suppressedRecipeKeys.Add(keyg); }
-                                        UnityEngine.Debug.LogWarning($"[ChanceCraft] Prefix-DBG: recorded GUI-wrapped recipe fingerprint {keyg}");
+                                        if (_loggingEnabled.Value)
+                                            BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogDebug($"[ChanceCraft] Prefix-DBG: recorded GUI-wrapped recipe fingerprint {keyg}");
                                     }
                                     catch { }
                                 }
                                 else
                                 {
-                                    UnityEngine.Debug.LogWarning("[ChanceCraft] Prefix-DBG: no early GUI-wrapped recipe found.");
+                                    if (_loggingEnabled.Value)
+                                        BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogDebug("[ChanceCraft] Prefix-DBG: no early GUI-wrapped recipe found.");
                                 }
                             }
                         }
@@ -958,22 +988,25 @@ namespace ChanceCraft
                             if (candidateEarly != null)
                             {
                                 _upgradeRecipe = candidateEarly;
-                                UnityEngine.Debug.LogWarning($"[ChanceCraft] Prefix-DBG: stored ObjectDB candidate as _upgradeRecipe = {RecipeInfo(candidateEarly)}");
+                                if (_loggingEnabled.Value)
+                                    BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogDebug($"[ChanceCraft] Prefix-DBG: stored ObjectDB candidate as _upgradeRecipe = {RecipeInfo(candidateEarly)}");
                                 if (RecipeConsumesResult(candidateEarly))
                                 {
                                     _isUpgradeDetected = true;
-                                    UnityEngine.Debug.LogWarning("[ChanceCraft] Prefix-DBG: ObjectDB candidate consumes result -> marking as upgrade-detected early.");
+                                    if (_loggingEnabled.Value)
+                                        BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogDebug("[ChanceCraft] Prefix-DBG: ObjectDB candidate consumes result -> marking as upgrade-detected early.");
                                 }
                             }
                             else
                             {
-                                UnityEngine.Debug.LogWarning("[ChanceCraft] Prefix-DBG: no ObjectDB upgrade candidate found early.");
+                                if (_loggingEnabled.Value)
+                                    BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogDebug("[ChanceCraft] Prefix-DBG: no ObjectDB upgrade candidate found early.");
                             }
                         }
                     }
                     catch (Exception ex)
                     {
-                        UnityEngine.Debug.LogWarning($"[ChanceCraft] Prefix-DBG: exception during early upgrade discovery: {ex}");
+                        BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogWarning($"[ChanceCraft] Prefix-DBG: exception during early upgrade discovery: {ex}");
                     }
 
                     // Save exact recipe instance for the call (so Postfix uses same object)
@@ -1047,7 +1080,8 @@ namespace ChanceCraft
                                 }
 
                                 if (_upgradeTargetItem != null)
-                                    UnityEngine.Debug.LogWarning($"[ChanceCraft] Prefix: captured upgrade target early: {ItemInfo(_upgradeTargetItem)}");
+                                    if (_loggingEnabled.Value)
+                                        BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogDebug($"[ChanceCraft] Prefix: captured upgrade target early: {ItemInfo(_upgradeTargetItem)}");
                             }
                             catch { /* ignore */ }
                         }
@@ -1166,7 +1200,8 @@ namespace ChanceCraft
 
                                     // Log which recipe we used for quality computation (helps diagnosing cases like yours)
                                     var rInfoDbg = RecipeInfo(recipeForQuality);
-                                    UnityEngine.Debug.LogWarning($"[ChanceCraft] Prefix-DBG: using recipeForQuality={rInfoDbg} to compute levelsToUpgrade");
+                                    if (_loggingEnabled.Value)
+                                        BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogDebug($"[ChanceCraft] Prefix-DBG: using recipeForQuality={rInfoDbg} to compute levelsToUpgrade");
 
                                     if (_upgradeTargetItem != null)
                                     {
@@ -1198,7 +1233,8 @@ namespace ChanceCraft
                                     if (levelsToUpgrade > 1 && amt > 0 && (amt % levelsToUpgrade) == 0)
                                     {
                                         perLevel = amt / levelsToUpgrade;
-                                        UnityEngine.Debug.LogWarning($"[ChanceCraft] Prefix-DBG: normalized GUI req {g.name}:{amt} by levelsToUpgrade={levelsToUpgrade} -> {perLevel}");
+                                        if (_loggingEnabled.Value)
+                                            BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogDebug($"[ChanceCraft] Prefix-DBG: normalized GUI req {g.name}:{amt} by levelsToUpgrade={levelsToUpgrade} -> {perLevel}");
                                     }
                                     else if (dbCandidate != null)
                                     {
@@ -1231,7 +1267,8 @@ namespace ChanceCraft
                                                             if (dbAmount > 0 && dbAmount < amt && (amt % dbAmount) == 0)
                                                             {
                                                                 perLevel = dbAmount;
-                                                                UnityEngine.Debug.LogWarning($"[ChanceCraft] Prefix-DBG: inferred per-level amount for {g.name} from DB candidate: {dbAmount} (gui total={amt})");
+                                                                if (_loggingEnabled.Value)
+                                                                    BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogDebug($"[ChanceCraft] Prefix-DBG: inferred per-level amount for {g.name} from DB candidate: {dbAmount} (gui total={amt})");
                                                             }
                                                             break;
                                                         }
@@ -1249,17 +1286,19 @@ namespace ChanceCraft
                                 _isUpgradeDetected = true;
                                 _upgradeGuiRequirements = normalized;
                                 var dbgJoined = string.Join(", ", _upgradeGuiRequirements.Select(x => x.name + ":" + x.amount));
-                                UnityEngine.Debug.LogWarning("[ChanceCraft] Prefix-DBG: GUI requirement list indicates UPGRADE -> marking as upgrade and storing GUI requirements: " + dbgJoined);
+                                if (_loggingEnabled.Value)
+                                    BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogDebug("[ChanceCraft] Prefix-DBG: GUI requirement list indicates UPGRADE -> marking as upgrade and storing GUI requirements: " + dbgJoined);
                             }
                             else
                             {
-                                UnityEngine.Debug.LogWarning("[ChanceCraft] Prefix-DBG: GUI reqs found but not an upgrade (ignored).");
+                                if (_loggingEnabled.Value)
+                                    BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogDebug("[ChanceCraft] Prefix-DBG: GUI reqs found but not an upgrade (ignored).");
                             }
                         }
                     }
                     catch (Exception ex)
                     {
-                        UnityEngine.Debug.LogWarning($"[ChanceCraft] Prefix-DBG: exception while checking GUI requirements: {ex}");
+                        BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogWarning($"[ChanceCraft] Prefix-DBG: exception while checking GUI requirements: {ex}");
                     }
                     // --- end GUI-requirements detection ---
 
@@ -1272,17 +1311,19 @@ namespace ChanceCraft
                             object cv = craftUpgradeField.GetValue(__instance);
                             if (cv is int v && v > 1)
                             {
-                                UnityEngine.Debug.LogWarning($"[ChanceCraft] Prefix: detected explicit m_craftUpgrade={v} - treating as upgrade, skipping suppression.");
+                                if (_loggingEnabled.Value)
+                                    BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogDebug($"[ChanceCraft] Prefix: detected explicit m_craftUpgrade={v} - treating as upgrade, skipping suppression.");
                                 _savedRecipeForCall = null;
                                 _isUpgradeDetected = true;
                                 _upgradeGuiRecipe = GetUpgradeRecipeFromGui(__instance);
                                 _upgradeRecipe = _upgradeRecipe ?? selectedRecipe;
                                 _upgradeTargetItem = GetSelectedInventoryItem(__instance);
-                                UnityEngine.Debug.LogWarning($"[ChanceCraft] Prefix: captured _upgradeGuiRecipe={RecipeInfo(_upgradeGuiRecipe)} _upgradeTargetItem={ItemInfo(_upgradeTargetItem)}");
+                                if (_loggingEnabled.Value)
+                                    BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogDebug($"[ChanceCraft] Prefix: captured _upgradeGuiRecipe={RecipeInfo(_upgradeGuiRecipe)} _upgradeTargetItem={ItemInfo(_upgradeTargetItem)}");
                                 return;
                             }
                         }
-                        catch (Exception ex) { UnityEngine.Debug.LogWarning($"[ChanceCraft] Prefix craftUpgrade check exception: {ex}"); }
+                        BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogWarning($"[ChanceCraft] Prefix craftUpgrade check exception: {ex}");
                     }
 
                     // Build resource list and snapshot
@@ -1337,7 +1378,8 @@ namespace ChanceCraft
                                     {
                                         existing.Add(it);
                                         existingData[it] = (it.m_quality, it.m_variant);
-                                        UnityEngine.Debug.LogWarning($"[ChanceCraft] Prefix: snapshot contains {ItemInfo(it)} (recorded q={it.m_quality} v={it.m_variant})");
+                                        if (_loggingEnabled.Value)
+                                            BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogDebug($"[ChanceCraft] Prefix: snapshot contains {ItemInfo(it)} (recorded q={it.m_quality} v={it.m_variant})");
                                     }
                                 }
                                 lock (typeof(ChanceCraftPlugin))
@@ -1354,19 +1396,21 @@ namespace ChanceCraft
                                             if (it2 == null) continue;
                                             _preCraftSnapshotHashQuality[RuntimeHelpers.GetHashCode(it2)] = it2.m_quality;
                                         }
-                                        UnityEngine.Debug.LogWarning($"[ChanceCraft] Prefix: populated _preCraftSnapshotHashQuality with {_preCraftSnapshotHashQuality.Count} entries");
+                                        if (_loggingEnabled.Value)
+                                            BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogDebug($"[ChanceCraft] Prefix: populated _preCraftSnapshotHashQuality with {_preCraftSnapshotHashQuality.Count} entries");
                                     }
                                     catch (Exception ex)
                                     {
-                                        UnityEngine.Debug.LogWarning($"[ChanceCraft] Prefix: exception populating pre-craft hash-quality map: {ex}");
+                                        BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogWarning($"[ChanceCraft] Prefix: exception populating pre-craft hash-quality map: {ex}");
                                         _preCraftSnapshotHashQuality = null;
                                     }
-                                    UnityEngine.Debug.LogWarning($"[ChanceCraft] Prefix: snapshot stored for recipe {RecipeInfo(selectedRecipe)} with {existing.Count} matching items");
+                                    if (_loggingEnabled.Value)
+                                        BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogDebug($"[ChanceCraft] Prefix: snapshot stored for recipe {RecipeInfo(selectedRecipe)} with {existing.Count} matching items");
                                 }
                             }
                         }
                     }
-                    catch (Exception ex) { UnityEngine.Debug.LogWarning($"[ChanceCraft] Prefix snapshot exception: {ex}"); }
+                    BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogWarning($"[ChanceCraft] Prefix snapshot exception: {ex}");
 
                     // Inventory-based upgrade detection: try to capture the exact selected inventory item first
                     try
@@ -1376,7 +1420,8 @@ namespace ChanceCraft
                         var localPlayer = Player.m_localPlayer;
 
                         var selectedInventoryItem = GetSelectedInventoryItem(__instance);
-                        UnityEngine.Debug.LogWarning($"[ChanceCraft] Prefix: selectedInventoryItem candidate = {ItemInfo(selectedInventoryItem)}");
+                        if (_loggingEnabled.Value)
+                            BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogDebug($"[ChanceCraft] Prefix: selectedInventoryItem candidate = {ItemInfo(selectedInventoryItem)}");
 
                         if (selectedInventoryItem != null &&
                             selectedInventoryItem.m_shared != null &&
@@ -1384,13 +1429,15 @@ namespace ChanceCraft
                             selectedInventoryItem.m_shared.m_name == craftedName &&
                             selectedInventoryItem.m_quality < craftedQuality)
                         {
-                            UnityEngine.Debug.LogWarning("[ChanceCraft] Prefix: exact selected inventory item detected as upgrade target.");
+                            if (_loggingEnabled.Value)
+                                BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogDebug("[ChanceCraft] Prefix: exact selected inventory item detected as upgrade target.");
                             _isUpgradeDetected = true;
                             _upgradeTargetItem = selectedInventoryItem;
                             _upgradeRecipe = _upgradeRecipe ?? selectedRecipe;
                             _upgradeGuiRecipe = GetUpgradeRecipeFromGui(__instance) ?? selectedRecipe;
                             _savedRecipeForCall = null;
-                            UnityEngine.Debug.LogWarning($"[ChanceCraft] Prefix: captured upgrade target {ItemInfo(_upgradeTargetItem)} upgradeGuiRecipe={RecipeInfo(_upgradeGuiRecipe)}");
+                            if (_loggingEnabled.Value)
+                                BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogDebug($"[ChanceCraft] Prefix: captured upgrade target {ItemInfo(_upgradeTargetItem)} upgradeGuiRecipe={RecipeInfo(_upgradeGuiRecipe)}");
                             return;
                         }
 
@@ -1411,35 +1458,39 @@ namespace ChanceCraft
                                 }
                                 if (foundLower != null)
                                 {
-                                    UnityEngine.Debug.LogWarning("[ChanceCraft] Prefix: detected lower-quality item in inventory - treating as upgrade, skipping suppression.");
+                                    if (_loggingEnabled.Value)
+                                        BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogDebug("[ChanceCraft] Prefix: detected lower-quality item in inventory - treating as upgrade, skipping suppression.");
                                     _isUpgradeDetected = true;
                                     _upgradeTargetItem = foundLower;
                                     _upgradeRecipe = _upgradeRecipe ?? selectedRecipe;
                                     _upgradeGuiRecipe = GetUpgradeRecipeFromGui(__instance) ?? selectedRecipe;
                                     _savedRecipeForCall = null;
-                                    UnityEngine.Debug.LogWarning($"[ChanceCraft] Prefix: captured upgrade target {ItemInfo(foundLower)} and upgradeGuiRecipe={RecipeInfo(_upgradeGuiRecipe)}");
+                                    if (_loggingEnabled.Value)
+                                        BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogDebug($"[ChanceCraft] Prefix: captured upgrade target {ItemInfo(foundLower)} and upgradeGuiRecipe={RecipeInfo(_upgradeGuiRecipe)}");
                                     return;
                                 }
                             }
                         }
                     }
-                    catch (Exception ex) { UnityEngine.Debug.LogWarning($"[ChanceCraft] Prefix upgrade detection exception: {ex}"); }
+                    BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogWarning($"[ChanceCraft] Prefix upgrade detection exception: {ex}");
 
                     // Recipe-consumes-result check
                     try
                     {
                         if (RecipeConsumesResult(selectedRecipe))
                         {
-                            UnityEngine.Debug.LogWarning("[ChanceCraft] Prefix: recipe consumes result item - treating as upgrade, skipping suppression.");
+                            if (_loggingEnabled.Value)
+                                BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogDebug("[ChanceCraft] Prefix: recipe consumes result item - treating as upgrade, skipping suppression.");
                             _isUpgradeDetected = true;
                             _upgradeRecipe = _upgradeRecipe ?? selectedRecipe;
                             _upgradeGuiRecipe = GetUpgradeRecipeFromGui(__instance) ?? selectedRecipe;
                             _savedRecipeForCall = null;
-                            UnityEngine.Debug.LogWarning($"[ChanceCraft] Prefix: captured upgradeGuiRecipe={RecipeInfo(_upgradeGuiRecipe)}");
+                            if (_loggingEnabled.Value)
+                                BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogDebug($"[ChanceCraft] Prefix: captured upgradeGuiRecipe={RecipeInfo(_upgradeGuiRecipe)}");
                             return;
                         }
                     }
-                    catch (Exception ex) { UnityEngine.Debug.LogWarning($"[ChanceCraft] Prefix RecipeConsumesResult exception: {ex}"); }
+                    BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogWarning($"[ChanceCraft] Prefix RecipeConsumesResult exception: {ex}");
 
                     // Capture GUI wrapper recipe if present
                     try
@@ -1453,7 +1504,8 @@ namespace ChanceCraft
                             {
                                 _suppressedRecipeKeys.Add(keyGui);
                             }
-                            UnityEngine.Debug.LogWarning($"[ChanceCraft] Prefix: captured GUI upgrade recipe and recorded its fingerprint: {keyGui} recipe={RecipeInfo(guiRecipe)} (ReferenceEqual to selectedRecipe? {ReferenceEquals(guiRecipe, selectedRecipe)})");
+                            if (_loggingEnabled.Value)
+                                BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogDebug($"[ChanceCraft] Prefix: captured GUI upgrade recipe and recorded its fingerprint: {keyGui} recipe={RecipeInfo(guiRecipe)} (ReferenceEqual to selectedRecipe? {ReferenceEquals(guiRecipe, selectedRecipe)})");
 
                             if (ReferenceEquals(guiRecipe, selectedRecipe))
                             {
@@ -1463,28 +1515,31 @@ namespace ChanceCraft
                                     if (candidate != null)
                                     {
                                         _upgradeRecipe = candidate;
-                                        UnityEngine.Debug.LogWarning($"[ChanceCraft] Prefix: stored ObjectDB upgrade candidate {RecipeInfo(candidate)} for later use.");
+                                        if (_loggingEnabled.Value)
+                                            BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogDebug($"[ChanceCraft] Prefix: stored ObjectDB upgrade candidate {RecipeInfo(candidate)} for later use.");
                                         if (RecipeConsumesResult(candidate))
                                         {
                                             _isUpgradeDetected = true;
-                                            UnityEngine.Debug.LogWarning("[ChanceCraft] Prefix: ObjectDB candidate consumes result -> marking as upgrade-detected.");
+                                            if (_loggingEnabled.Value)
+                                                BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogDebug("[ChanceCraft] Prefix: ObjectDB candidate consumes result -> marking as upgrade-detected.");
                                         }
                                     }
                                 }
                                 catch (Exception ex)
                                 {
-                                    UnityEngine.Debug.LogWarning($"[ChanceCraft] Prefix: FindBestUpgradeRecipeCandidate exception: {ex}");
+                                    BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogWarning($"[ChanceCraft] Prefix: FindBestUpgradeRecipeCandidate exception: {ex}");
                                 }
                             }
                         }
                         else
                         {
-                            UnityEngine.Debug.LogWarning("[ChanceCraft] Prefix: GetUpgradeRecipeFromGui returned null -- no separate GUI upgrade recipe detected (will use selectedRecipe instance).");
+                            if (_loggingEnabled.Value)
+                                BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogDebug("[ChanceCraft] Prefix: GetUpgradeRecipeFromGui returned null -- no separate GUI upgrade recipe detected (will use selectedRecipe instance).");
                         }
                     }
                     catch (Exception ex)
                     {
-                        UnityEngine.Debug.LogWarning($"[ChanceCraft] Prefix: exception attempting to capture GUI upgrade recipe: {ex}");
+                        BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogWarning($"[ChanceCraft] Prefix: exception attempting to capture GUI upgrade recipe: {ex}");
                     }
 
                     // Build validReqs (unchanged)
@@ -1502,7 +1557,8 @@ namespace ChanceCraft
                     // Only suppress multi-resource recipes
                     if (validReqs.Count <= 1)
                     {
-                        UnityEngine.Debug.LogWarning("[ChanceCraft] Prefix: recipe has <=1 valid req -> skipping suppression.");
+                        if (_loggingEnabled.Value)
+                            BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogDebug("[ChanceCraft] Prefix: recipe has <=1 valid req -> skipping suppression.");
                         return;
                     }
 
@@ -1520,7 +1576,8 @@ namespace ChanceCraft
 
                     if (!isEligible)
                     {
-                        UnityEngine.Debug.LogWarning("[ChanceCraft] Prefix: item type not eligible -> skipping suppression.");
+                        if (_loggingEnabled.Value)
+                            BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogDebug("[ChanceCraft] Prefix: item type not eligible -> skipping suppression.");
                         return;
                     }
 
@@ -1538,11 +1595,12 @@ namespace ChanceCraft
                         {
                             _suppressedRecipeKeys.Add(key);
                         }
-                        UnityEngine.Debug.LogWarning($"[ChanceCraft] Prefix: recorded suppressed recipe fingerprint: {key}");
+                        if (_loggingEnabled.Value)
+                            BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogDebug($"[ChanceCraft] Prefix: recorded suppressed recipe fingerprint: {key}");
                     }
                     catch (Exception ex)
                     {
-                        UnityEngine.Debug.LogWarning($"[ChanceCraft] Prefix: exception recording suppressed fingerprint: {ex}");
+                        BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogWarning($"[ChanceCraft] Prefix: exception recording suppressed fingerprint: {ex}");
                     }
 
                     // Suppress live recipe resources
@@ -1557,12 +1615,13 @@ namespace ChanceCraft
                         resourcesField.SetValue(selectedRecipe, empty);
                         _suppressedThisCall = true;
                         IsDoCraft = true;
-                        UnityEngine.Debug.LogWarning("[ChanceCraft] Prefix: suppressed resources for plugin-managed keep-one-on-fail behavior.");
+                        if (_loggingEnabled.Value)
+                            BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogDebug("[ChanceCraft] Prefix: suppressed resources for plugin-managed keep-one-on-fail behavior.");
                     }
                 }
                 catch (Exception ex)
                 {
-                    UnityEngine.Debug.LogWarning($"[ChanceCraft] Prefix exception: {ex}");
+                    BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogWarning($"[ChanceCraft] Prefix exception: {ex}");
                     _suppressedThisCall = false;
                     _savedRecipeForCall = null;
                     IsDoCraft = false;
@@ -1589,7 +1648,8 @@ namespace ChanceCraft
                                     resourcesField.SetValue(_savedRecipeForCall, saved);
                                 }
                                 _savedResources.Remove(_savedRecipeForCall);
-                                UnityEngine.Debug.LogWarning($"[ChanceCraft] Postfix: restored resources for savedRecipeForCall: {RecipeInfo(_savedRecipeForCall)}");
+                                if (_loggingEnabled.Value)
+                                    BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogDebug($"[ChanceCraft] Postfix: restored resources for savedRecipeForCall: {RecipeInfo(_savedRecipeForCall)}");
                             }
                         }
                     }
@@ -1614,26 +1674,29 @@ namespace ChanceCraft
                         // If upgrade detected delegate to TrySpawnCraftEffect (handles both success/failure)
                         if (_isUpgradeDetected || IsUpgradeOperation(__instance, recipeForLogic))
                         {
-                            UnityEngine.Debug.LogWarning("[ChanceCraft] Postfix: upgrade detected — delegating to TrySpawnCraftEffect for success/failure handling.");
+                            if (_loggingEnabled.Value)
+                                BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogDebug("[ChanceCraft] Postfix: upgrade detected — delegating to TrySpawnCraftEffect for success/failure handling.");
 
                             try
                             {
                                 if (_upgradeGuiRecipe == null) _upgradeGuiRecipe = GetUpgradeRecipeFromGui(__instance);
                                 if (_upgradeTargetItem == null) _upgradeTargetItem = GetSelectedInventoryItem(__instance);
 
-                                UnityEngine.Debug.LogWarning($"[ChanceCraft] Postfix: calling TrySpawnCraftEffect for upgrade recipe handling. _upgradeGuiRecipe={RecipeInfo(_upgradeGuiRecipe)}, _upgradeTargetItem={ItemInfo(_upgradeTargetItem)}");
+                                if (_loggingEnabled.Value)
+                                    BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogDebug($"[ChanceCraft] Postfix: calling TrySpawnCraftEffect for upgrade recipe handling. _upgradeGuiRecipe={RecipeInfo(_upgradeGuiRecipe)}, _upgradeTargetItem={ItemInfo(_upgradeTargetItem)}");
 
                                 // Explicitly indicate this is an upgrade-handling call so TrySpawnCraftEffect treats it as upgrade
                                 Recipe resultFromTry = ChanceCraftPlugin.TrySpawnCraftEffect(__instance, recipeForLogic, true);
 
                                 if (resultFromTry != null)
                                 {
-                                    UnityEngine.Debug.LogWarning("[ChanceCraft] Postfix: TrySpawnCraftEffect indicated a failed non-upgrade craft; proceeding with created-item removal.");
+                                    BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogWarning("[ChanceCraft] Postfix: TrySpawnCraftEffect indicated a failed non-upgrade craft; proceeding with created-item removal.");
                                     // fall through: continue to standard created-item removal logic below if needed.
                                 }
                                 else
                                 {
-                                    UnityEngine.Debug.LogWarning("[ChanceCraft] Postfix: TrySpawnCraftEffect handled upgrade success/failure — cleanup and return.");
+                                    if (_loggingEnabled.Value)
+                                        BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogDebug("[ChanceCraft] Postfix: TrySpawnCraftEffect handled upgrade success/failure — cleanup and return.");
                                     // cleanup and return (upgrade handled)
                                     try
                                     {
@@ -1641,7 +1704,8 @@ namespace ChanceCraft
                                         {
                                             var key = RecipeFingerprint(recipeForLogic);
                                             lock (_suppressedRecipeKeysLock) { _suppressedRecipeKeys.Remove(key); }
-                                            UnityEngine.Debug.LogWarning($"[ChanceCraft] Postfix: removed suppressed fingerprint {key}");
+                                            if (_loggingEnabled.Value)
+                                                BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogDebug($"[ChanceCraft] Postfix: removed suppressed fingerprint {key}");
                                         }
                                         if (_upgradeGuiRecipe != null)
                                         {
@@ -1649,7 +1713,8 @@ namespace ChanceCraft
                                             {
                                                 var keyg = RecipeFingerprint(_upgradeGuiRecipe);
                                                 lock (_suppressedRecipeKeysLock) { _suppressedRecipeKeys.Remove(keyg); }
-                                                UnityEngine.Debug.LogWarning($"[ChanceCraft] Postfix: removed suppressed GUI-upgrade fingerprint {keyg}");
+                                                if (_loggingEnabled.Value)
+                                                    BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogDebug($"[ChanceCraft] Postfix: removed suppressed GUI-upgrade fingerprint {keyg}");
                                             }
                                             catch { }
                                         }
@@ -1671,7 +1736,7 @@ namespace ChanceCraft
                             }
                             catch (Exception ex)
                             {
-                                UnityEngine.Debug.LogWarning($"[ChanceCraft] Postfix: Exception while delegating upgrade handling to TrySpawnCraftEffect: {ex}");
+                                BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogWarning($"[ChanceCraft] Postfix: Exception while delegating upgrade handling to TrySpawnCraftEffect: {ex}");
                             }
                         }
 
@@ -1682,7 +1747,7 @@ namespace ChanceCraft
                         {
                             try
                             {
-                                UnityEngine.Debug.LogWarning("[ChanceCraft] Postfix: failed craft detected for multi-resource recipe — removing newly-created crafted items only.");
+                                BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogWarning("[ChanceCraft] Postfix: failed craft detected for multi-resource recipe — removing newly-created crafted items only.");
 
                                 // Use snapshot if it matches the recipe; otherwise null
                                 HashSet<ItemDrop.ItemData> beforeSet = null;
@@ -1700,7 +1765,8 @@ namespace ChanceCraft
                                 // Remove up to recept.m_amount of crafted items, preferring items not in beforeSet.
                                 int toRemoveCount = recept.m_amount > 0 ? recept.m_amount : 1;
                                 var invItems = player.GetInventory()?.GetAllItems();
-                                UnityEngine.Debug.LogWarning($"[ChanceCraft] Postfix: attempting to remove up to {toRemoveCount} of result type {recept.m_item?.m_itemData?.m_shared?.m_name}; snapshotCount={(beforeSet == null ? 0 : beforeSet.Count)}");
+                                if (_loggingEnabled.Value)
+                                    BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogDebug($"[ChanceCraft] Postfix: attempting to remove up to {toRemoveCount} of result type {recept.m_item?.m_itemData?.m_shared?.m_name}; snapshotCount={(beforeSet == null ? 0 : beforeSet.Count)}");
                                 if (invItems != null)
                                 {
                                     int removedTotal = 0;
@@ -1719,14 +1785,16 @@ namespace ChanceCraft
                                             // Never remove the exact upgrade target item (safety)
                                             if (item == _upgradeTargetItem)
                                             {
-                                                UnityEngine.Debug.LogWarning($"[ChanceCraft] Postfix: skipping removal of upgrade target item {ItemInfo(item)}");
+                                                if (_loggingEnabled.Value)
+                                                    BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogDebug($"[ChanceCraft] Postfix: skipping removal of upgrade target item {ItemInfo(item)}");
                                                 continue;
                                             }
 
                                             if (beforeSet == null || !beforeSet.Contains(item))
                                             {
                                                 int remove = Math.Min(item.m_stack, toRemoveCount);
-                                                UnityEngine.Debug.LogWarning($"[ChanceCraft] Postfix: removing {remove} from newly created item {ItemInfo(item)}");
+                                                if (_loggingEnabled.Value)
+                                                    BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogDebug($"[ChanceCraft] Postfix: removing {remove} from newly created item {ItemInfo(item)}");
                                                 item.m_stack -= remove;
                                                 toRemoveCount -= remove;
                                                 removedTotal += remove;
@@ -1737,7 +1805,8 @@ namespace ChanceCraft
                                             }
                                             else
                                             {
-                                                UnityEngine.Debug.LogWarning($"[ChanceCraft] Postfix: not removing existing pre-craft item {ItemInfo(item)} (in snapshot)");
+                                                if (_loggingEnabled.Value)
+                                                    BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogDebug($"[ChanceCraft] Postfix: not removing existing pre-craft item {ItemInfo(item)} (in snapshot)");
                                             }
                                         }
                                     }
@@ -1747,7 +1816,8 @@ namespace ChanceCraft
                                     {
                                         if (beforeSet != null && removedTotal == 0)
                                         {
-                                            UnityEngine.Debug.LogWarning("[ChanceCraft] Postfix: no newly-created items found (all matching items were in snapshot) — skipping fallback removal");
+                                            if (_loggingEnabled.Value)
+                                                BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogDebug("[ChanceCraft] Postfix: no newly-created items found (all matching items were in snapshot) — skipping fallback removal");
                                             // won't remove anything further
                                         }
                                         else
@@ -1765,12 +1835,14 @@ namespace ChanceCraft
                                                 {
                                                     if (item == _upgradeTargetItem)
                                                     {
-                                                        UnityEngine.Debug.LogWarning($"[ChanceCraft] Postfix (fallback): skipping upgrade target {ItemInfo(item)}");
+                                                        if (_loggingEnabled.Value)
+                                                            BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogDebug($"[ChanceCraft] Postfix (fallback): skipping upgrade target {ItemInfo(item)}");
                                                         continue;
                                                     }
 
                                                     int remove = Math.Min(item.m_stack, toRemoveCount);
-                                                    UnityEngine.Debug.LogWarning($"[ChanceCraft] Postfix (fallback): removing {remove} from {ItemInfo(item)}");
+                                                    if (_loggingEnabled.Value)
+                                                        BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogDebug($"[ChanceCraft] Postfix (fallback): removing {remove} from {ItemInfo(item)}");
                                                     item.m_stack -= remove;
                                                     toRemoveCount -= remove;
                                                     if (item.m_stack <= 0)
@@ -1785,18 +1857,18 @@ namespace ChanceCraft
                             }
                             catch (Exception ex)
                             {
-                                UnityEngine.Debug.LogWarning($"[ChanceCraft] Postfix: Exception while removing crafted item: {ex}");
+                                BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogWarning($"[ChanceCraft] Postfix: Exception while removing crafted item: {ex}");
                             }
                         }
                     }
                     catch (Exception ex)
                     {
-                        UnityEngine.Debug.LogWarning($"[ChanceCraft] Postfix: Exception in upgrade-check/ChanceCraft logic: {ex}");
+                        BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogWarning($"[ChanceCraft] Postfix: Exception in upgrade-check/ChanceCraft logic: {ex}");
                     }
                 }
                 catch (Exception ex)
                 {
-                    UnityEngine.Debug.LogWarning($"[ChanceCraft] Postfix exception: {ex}");
+                    BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogWarning($"[ChanceCraft] Postfix exception: {ex}");
                     _suppressedThisCall = false;
                     _savedRecipeForCall = null;
                     IsDoCraft = false;
@@ -1833,7 +1905,8 @@ namespace ChanceCraft
             if (selectedRecipe == null || Player.m_localPlayer == null)
                 return null;
 
-            UnityEngine.Debug.LogWarning($"[ChanceCraft] TrySpawnCraftEffect called for recipe: {RecipeInfo(selectedRecipe)} (isUpgradeCall={isUpgradeCall})");
+            if (_loggingEnabled.Value)
+                BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogDebug($"[ChanceCraft] TrySpawnCraftEffect called for recipe: {RecipeInfo(selectedRecipe)} (isUpgradeCall={isUpgradeCall})");
 
             var itemType = selectedRecipe.m_item?.m_itemData?.m_shared?.m_itemType;
             if (itemType != ItemDrop.ItemData.ItemType.OneHandedWeapon &&
@@ -1846,12 +1919,12 @@ namespace ChanceCraft
                 itemType != ItemDrop.ItemData.ItemType.Legs &&
                 itemType != ItemDrop.ItemData.ItemType.Ammo)
             {
-                UnityEngine.Debug.LogWarning("[ChanceCraft] Item type not eligible for TrySpawnCraftEffect.");
+                BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogWarning("[ChanceCraft] Item type not eligible for TrySpawnCraftEffect.");
                 return null;
             }
 
             var player = Player.m_localPlayer;
-            UnityEngine.Debug.LogWarning("[chancecraft] before rand");
+            BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogWarning("[chancecraft] before rand");
 
             float chance = 0.6f;
             if (itemType == ItemDrop.ItemData.ItemType.OneHandedWeapon ||
@@ -1880,14 +1953,14 @@ namespace ChanceCraft
 
             // draw RNG once and log
             float randVal = UnityEngine.Random.value;
-            UnityEngine.Debug.LogWarning($"[chancecraft] final chance = {chance} rand={randVal}");
+            BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogWarning($"[chancecraft] final chance = {chance} rand={randVal}");
 
             bool isUpgradeNow = isUpgradeCall || _isUpgradeDetected || IsUpgradeOperation(gui, selectedRecipe);
 
             if (randVal <= chance)
             {
                 // SUCCESS path
-                UnityEngine.Debug.LogWarning("[chancecraft] success");
+                BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogWarning("[chancecraft] success");
                 var craftingStationField = typeof(InventoryGui).GetField("currentCraftingStation", BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
                 var craftingStation = craftingStationField?.GetValue(gui);
                 if (craftingStation != null)
@@ -1913,13 +1986,13 @@ namespace ChanceCraft
                         if (_suppressedRecipeKeys.Contains(key))
                         {
                             suppressedThisOperation = true;
-                            UnityEngine.Debug.LogWarning($"[ChanceCraft] TrySpawnCraftEffect: detected suppressed recipe fingerprint {key} -> treating as suppressed");
+                            BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogWarning($"[ChanceCraft] TrySpawnCraftEffect: detected suppressed recipe fingerprint {key} -> treating as suppressed");
                         }
                     }
                 }
                 catch (Exception ex)
                 {
-                    UnityEngine.Debug.LogWarning($"[ChanceCraft] TrySpawnCraftEffect: exception checking suppressed fingerprint: {ex}");
+                    BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogWarning($"[ChanceCraft] TrySpawnCraftEffect: exception checking suppressed fingerprint: {ex}");
                 }
 
                 try
@@ -1939,9 +2012,9 @@ namespace ChanceCraft
                     try
                     {
                         var recipeToUse = _upgradeGuiRecipe ?? _upgradeRecipe ?? GetUpgradeRecipeFromGui(gui) ?? selectedRecipe;
-                        UnityEngine.Debug.LogWarning($"[ChanceCraft] TrySpawnCraftEffect: chosen recipeToUse = {RecipeInfo(recipeToUse)}");
+                        BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogWarning($"[ChanceCraft] TrySpawnCraftEffect: chosen recipeToUse = {RecipeInfo(recipeToUse)}");
                         if (_upgradeTargetItem == null) _upgradeTargetItem = GetSelectedInventoryItem(gui);
-                        UnityEngine.Debug.LogWarning($"[ChanceCraft] TrySpawnCraftEffect: upgrade success detected - removing resources; target={ItemInfo(_upgradeTargetItem)}");
+                        BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogWarning($"[ChanceCraft] TrySpawnCraftEffect: upgrade success detected - removing resources; target={ItemInfo(_upgradeTargetItem)}");
 
                         if (ReferenceEquals(recipeToUse, selectedRecipe))
                         {
@@ -1962,7 +2035,7 @@ namespace ChanceCraft
                     }
                     catch (Exception ex)
                     {
-                        UnityEngine.Debug.LogWarning($"[ChanceCraft] TrySpawnCraftEffect: Exception while removing upgrade resources after success: {ex}");
+                        BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogWarning($"[ChanceCraft] TrySpawnCraftEffect: Exception while removing upgrade resources after success: {ex}");
                     }
 
                     return null;
@@ -1971,11 +2044,12 @@ namespace ChanceCraft
                 {
                     if (suppressedThisOperation)
                     {
-                        try { RemoveRequiredResources(gui, player, selectedRecipe, true, false); } catch (Exception ex) { UnityEngine.Debug.LogWarning($"[ChanceCraft] TrySpawnCraftEffect: Exception while removing resources for suppressed craft: {ex}"); }
+                        BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogWarning($"[ChanceCraft] TrySpawnCraftEffect: Exception while removing resources for suppressed craft: {ex}");
                     }
                     else
                     {
-                        UnityEngine.Debug.LogWarning("[ChanceCraft] TrySpawnCraftEffect: craft success detected, skipping plugin resource removal so the game handles it.");
+                        if (_loggingEnabled.Value)
+                            BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogDebug("[ChanceCraft] TrySpawnCraftEffect: craft success detected, skipping plugin resource removal so the game handles it.");
                     }
                     return null;
                 }
@@ -1983,17 +2057,18 @@ namespace ChanceCraft
             else
             {
                 // FAILURE branch
-                UnityEngine.Debug.LogWarning("[chancecraft] failed");
+                BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogWarning("[chancecraft] failed");
 
                 if (isUpgradeCall || IsUpgradeOperation(gui, selectedRecipe) || _isUpgradeDetected)
                 {
                     // diagnostic logging
                     try
                     {
-                        UnityEngine.Debug.LogWarning($"[ChanceCraft] TrySpawnCraftEffect: _upgradeTargetItem captured hash={(_upgradeTargetItem != null ? RuntimeHelpers.GetHashCode(_upgradeTargetItem).ToString("X8") : "<null>")} pre-craft-snapshot-data-count={(_preCraftSnapshotData != null ? _preCraftSnapshotData.Count.ToString() : "<null>")}");
+                        if (_loggingEnabled.Value)
+                            BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogDebug($"[ChanceCraft] TrySpawnCraftEffect: _upgradeTargetItem captured hash={(_upgradeTargetItem != null ? RuntimeHelpers.GetHashCode(_upgradeTargetItem).ToString("X8") : "<null>")} pre-craft-snapshot-data-count={(_preCraftSnapshotData != null ? _preCraftSnapshotData.Count.ToString() : "<null>")}");
                         if (_preCraftSnapshotData != null)
                         {
-                            UnityEngine.Debug.LogWarning($"[ChanceCraft] TrySpawnCraftEffect: preCraftSnapshotData contains upgradeTargetItem? {_preCraftSnapshotData.ContainsKey(_upgradeTargetItem)}");
+                            BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogWarning($"[ChanceCraft] TrySpawnCraftEffect: preCraftSnapshotData contains upgradeTargetItem? {_preCraftSnapshotData.ContainsKey(_upgradeTargetItem)}");
                         }
                     }
                     catch { }
@@ -2001,7 +2076,7 @@ namespace ChanceCraft
                     // Run revert attempts unconditionally for upgrade failures
                     try
                     {
-                        UnityEngine.Debug.LogWarning("[ChanceCraft] TrySpawnCraftEffect: attempting revert for failed upgrade (unconditional attempt).");
+                        BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogWarning("[ChanceCraft] TrySpawnCraftEffect: attempting revert for failed upgrade (unconditional attempt).");
 
                         bool didRevertAny = false;
                         lock (typeof(ChanceCraftPlugin))
@@ -2021,7 +2096,7 @@ namespace ChanceCraft
                                         {
                                             if (originalRef.m_quality != pre.quality || originalRef.m_variant != pre.variant)
                                             {
-                                                UnityEngine.Debug.LogWarning($"[ChanceCraft] TrySpawnCraftEffect: reverting original item {ItemInfo(originalRef)} -> q={pre.quality} v={pre.variant}");
+                                                BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogWarning($"[ChanceCraft] TrySpawnCraftEffect: reverting original item {ItemInfo(originalRef)} -> q={pre.quality} v={pre.variant}");
                                                 originalRef.m_quality = pre.quality;
                                                 originalRef.m_variant = pre.variant;
                                                 didRevertAny = true;
@@ -2041,7 +2116,7 @@ namespace ChanceCraft
                                             if (cur.m_quality <= pre.quality) continue;
                                             if (preRefs != null && preRefs.Contains(cur)) continue;
 
-                                            UnityEngine.Debug.LogWarning($"[ChanceCraft] TrySpawnCraftEffect: reverting replacement item {ItemInfo(cur)} -> q={pre.quality} v={pre.variant}");
+                                            BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogWarning($"[ChanceCraft] TrySpawnCraftEffect: reverting replacement item {ItemInfo(cur)} -> q={pre.quality} v={pre.variant}");
                                             cur.m_quality = pre.quality;
                                             cur.m_variant = pre.variant;
                                             didRevertAny = true;
@@ -2050,7 +2125,7 @@ namespace ChanceCraft
                                     }
                                     catch (Exception ex)
                                     {
-                                        UnityEngine.Debug.LogWarning($"[ChanceCraft] TrySpawnCraftEffect: exception while processing pre-snapshot kv for revert: {ex}");
+                                        BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogWarning($"[ChanceCraft] TrySpawnCraftEffect: exception while processing pre-snapshot kv for revert: {ex}");
                                     }
                                 }
                             }
@@ -2088,7 +2163,8 @@ namespace ChanceCraft
                                                     if (it.m_quality <= expectedPreQuality) continue;
                                                     if (_preCraftSnapshot != null && _preCraftSnapshot.Contains(it)) continue;
 
-                                                    UnityEngine.Debug.LogWarning($"[ChanceCraft] TrySpawnCraftEffect: fallback revert: changing {ItemInfo(it)} -> q={expectedPreQuality}");
+                                                    if (_loggingEnabled.Value)
+                                                        BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogDebug($"[ChanceCraft] TrySpawnCraftEffect: fallback revert: changing {ItemInfo(it)} -> q={expectedPreQuality}");
                                                     it.m_quality = expectedPreQuality;
                                                     try
                                                     {
@@ -2104,7 +2180,7 @@ namespace ChanceCraft
                                                 }
                                                 catch (Exception ex)
                                                 {
-                                                    UnityEngine.Debug.LogWarning($"[ChanceCraft] TrySpawnCraftEffect: fallback revert exception for item: {ex}");
+                                                    BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogWarning($"[ChanceCraft] TrySpawnCraftEffect: fallback revert exception for item: {ex}");
                                                 }
                                             }
                                         }
@@ -2112,7 +2188,7 @@ namespace ChanceCraft
                                 }
                                 catch (Exception ex)
                                 {
-                                    UnityEngine.Debug.LogWarning($"[ChanceCraft] TrySpawnCraftEffect: fallback revert exception: {ex}");
+                                    BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogWarning($"[ChanceCraft] TrySpawnCraftEffect: fallback revert exception: {ex}");
                                 }
                             }
 
@@ -2145,24 +2221,27 @@ namespace ChanceCraft
 
                                             if (string.Equals(candidate.m_shared.m_name, resultName, StringComparison.OrdinalIgnoreCase) && candidate.m_quality > expectedPreQuality)
                                             {
-                                                UnityEngine.Debug.LogWarning($"[ChanceCraft] TrySpawnCraftEffect: index-fallback revert at idx {_upgradeTargetItemIndex}: {ItemInfo(candidate)} -> q={expectedPreQuality}");
+                                                if (_loggingEnabled.Value)
+                                                    BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogDebug($"[ChanceCraft] TrySpawnCraftEffect: index-fallback revert at idx {_upgradeTargetItemIndex}: {ItemInfo(candidate)} -> q={expectedPreQuality}");
                                                 candidate.m_quality = expectedPreQuality;
                                                 didRevertAny = true;
                                             }
                                             else
                                             {
-                                                UnityEngine.Debug.LogWarning($"[ChanceCraft] TrySpawnCraftEffect: index-fallback candidate at idx {_upgradeTargetItemIndex} was not an upgraded match: {ItemInfo(candidate)}");
+                                                if (_loggingEnabled.Value)
+                                                    BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogDebug($"[ChanceCraft] TrySpawnCraftEffect: index-fallback candidate at idx {_upgradeTargetItemIndex} was not an upgraded match: {ItemInfo(candidate)}");
                                             }
                                         }
                                     }
                                     else
                                     {
-                                        UnityEngine.Debug.LogWarning($"[ChanceCraft] TrySpawnCraftEffect: index-fallback index {_upgradeTargetItemIndex} invalid for current inventory count {(all == null ? 0 : all.Count)}");
+                                        if (_loggingEnabled.Value)
+                                            BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogDebug($"[ChanceCraft] TrySpawnCraftEffect: index-fallback index {_upgradeTargetItemIndex} invalid for current inventory count {(all == null ? 0 : all.Count)}");
                                     }
                                 }
                                 catch (Exception ex)
                                 {
-                                    UnityEngine.Debug.LogWarning($"[ChanceCraft] TrySpawnCraftEffect: index-fallback revert exception: {ex}");
+                                    BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogWarning($"[ChanceCraft] TrySpawnCraftEffect: index-fallback revert exception: {ex}");
                                 }
                             }
 
@@ -2189,7 +2268,8 @@ namespace ChanceCraft
                                                 {
                                                     if (it.m_quality > prevQ)
                                                     {
-                                                        UnityEngine.Debug.LogWarning($"[ChanceCraft] TrySpawnCraftEffect: hash-map revert: item {ItemInfo(it)} (hash={h:X8}) prevQ={prevQ} -> curQ={it.m_quality}");
+                                                        if (_loggingEnabled.Value)
+                                                            BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogDebug($"[ChanceCraft] TrySpawnCraftEffect: hash-map revert: item {ItemInfo(it)} (hash={h:X8}) prevQ={prevQ} -> curQ={it.m_quality}");
                                                         it.m_quality = prevQ;
                                                         try
                                                         {
@@ -2210,7 +2290,8 @@ namespace ChanceCraft
                                                         string.Equals(it.m_shared.m_name, resultName, StringComparison.OrdinalIgnoreCase) &&
                                                         it.m_quality > expectedPreQuality)
                                                     {
-                                                        UnityEngine.Debug.LogWarning($"[ChanceCraft] TrySpawnCraftEffect: hash-map new-instance revert: item {ItemInfo(it)} (hash={h:X8}) appears new/upgraded -> setting q={expectedPreQuality}");
+                                                        if (_loggingEnabled.Value)
+                                                            BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogDebug($"[ChanceCraft] TrySpawnCraftEffect: hash-map new-instance revert: item {ItemInfo(it)} (hash={h:X8}) appears new/upgraded -> setting q={expectedPreQuality}");
                                                         it.m_quality = expectedPreQuality;
                                                         didRevertAny = true;
                                                     }
@@ -2218,18 +2299,18 @@ namespace ChanceCraft
                                             }
                                             catch (Exception ex)
                                             {
-                                                UnityEngine.Debug.LogWarning($"[ChanceCraft] TrySpawnCraftEffect: hash-map revert exception for item: {ex}");
+                                                BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogWarning($"[ChanceCraft] TrySpawnCraftEffect: hash-map revert exception for item: {ex}");
                                             }
                                         }
                                     }
                                 }
                                 catch (Exception ex)
                                 {
-                                    UnityEngine.Debug.LogWarning($"[ChanceCraft] TrySpawnCraftEffect: hash-map revert top-level exception: {ex}");
+                                    BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogWarning($"[ChanceCraft] TrySpawnCraftEffect: hash-map revert top-level exception: {ex}");
                                 }
                             }
 
-                            UnityEngine.Debug.LogWarning($"[ChanceCraft] TrySpawnCraftEffect: revert attempts finished, didRevertAny={didRevertAny}");
+                            BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogWarning($"[ChanceCraft] TrySpawnCraftEffect: revert attempts finished, didRevertAny={didRevertAny}");
 
                             // UI refresh after authoritative revert
                             try
@@ -2258,7 +2339,7 @@ namespace ChanceCraft
                     }
                     catch (Exception ex)
                     {
-                        UnityEngine.Debug.LogWarning($"[ChanceCraft] TrySpawnCraftEffect: exception while reverting in-place upgrade: {ex}");
+                        BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogWarning($"[ChanceCraft] TrySpawnCraftEffect: exception while reverting in-place upgrade: {ex}");
                     }
 
                     // Now remove the upgrade resources (preserve target item since we've reverted it)
@@ -2273,12 +2354,13 @@ namespace ChanceCraft
 
                         var upgradeTarget = _upgradeTargetItem ?? GetSelectedInventoryItem(gui);
 
-                        UnityEngine.Debug.LogWarning($"[ChanceCraft] TrySpawnCraftEffect: removing upgrade resources using {RecipeInfo(recipeToUse)}; target={ItemInfo(upgradeTarget)}");
+                        if (_loggingEnabled.Value)
+                            BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogDebug($"[ChanceCraft] TrySpawnCraftEffect: removing upgrade resources using {RecipeInfo(recipeToUse)}; target={ItemInfo(upgradeTarget)}");
                         RemoveRequiredResourcesUpgrade(gui, Player.m_localPlayer, recipeToUse, upgradeTarget, false);
                     }
                     catch (Exception ex)
                     {
-                        UnityEngine.Debug.LogWarning($"[ChanceCraft] TrySpawnCraftEffect: exception while removing resources after failure: {ex}");
+                        BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogWarning($"[ChanceCraft] TrySpawnCraftEffect: exception while removing resources after failure: {ex}");
                     }
 
                     return null;
@@ -2302,7 +2384,8 @@ namespace ChanceCraft
                                 if (currentQuality > pre.quality && currentVariant == pre.variant)
                                 {
                                     gameAlreadyHandledNormal = true;
-                                    UnityEngine.Debug.LogWarning($"[ChanceCraft] TrySpawnCraftEffect: detected pre-snapshot item upgraded in-place: {ItemInfo(item)} -> treating as success, skipping plugin removal");
+                                    if (_loggingEnabled.Value)
+                                        BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogDebug($"[ChanceCraft] TrySpawnCraftEffect: detected pre-snapshot item upgraded in-place: {ItemInfo(item)} -> treating as success, skipping plugin removal");
                                     break;
                                 }
                             }
@@ -2311,7 +2394,7 @@ namespace ChanceCraft
                 }
                 catch (Exception ex)
                 {
-                    UnityEngine.Debug.LogWarning($"[ChanceCraft] TrySpawnCraftEffect: exception while checking snapshot for in-place upgrade: {ex}");
+                    BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogWarning($"[ChanceCraft] TrySpawnCraftEffect: exception while checking snapshot for in-place upgrade: {ex}");
                 }
 
                 if (gameAlreadyHandledNormal)
@@ -2356,7 +2439,16 @@ namespace ChanceCraft
                     var m = t.GetMethod(name, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
                     if (m != null && m.GetParameters().Length == 0)
                     {
-                        try { m.Invoke(gui, null); UnityEngine.Debug.LogWarning($"[ChanceCraft] RefreshCraftingPanel: invoked {name}()"); } catch (Exception ex) { UnityEngine.Debug.LogWarning($"[ChanceCraft] RefreshCraftingPanel: {name}() threw: {ex}"); }
+                        try
+                        {
+                            m.Invoke(gui, null);
+                            if (_loggingEnabled.Value)
+                                BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogDebug($"RefreshCraftingPanel: invoked {name}()");
+                        }
+                        catch (Exception ex)
+                        {
+                            BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogWarning($"RefreshCraftingPanel: {name}() threw: {ex}");
+                        }
                     }
                 }
                 catch { /* ignore per-method */ }
@@ -2371,7 +2463,8 @@ namespace ChanceCraft
                     var cur = selField.GetValue(gui);
                     try { selField.SetValue(gui, null); } catch { }
                     try { selField.SetValue(gui, cur); } catch { }
-                    UnityEngine.Debug.LogWarning("[ChanceCraft] RefreshCraftingPanel: toggled m_selectedRecipe to force rebind");
+                    if (_loggingEnabled.Value)
+                        BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogDebug("[ChanceCraft] RefreshCraftingPanel: toggled m_selectedRecipe to force rebind");
                 }
             }
             catch { /* ignore */ }
@@ -2392,7 +2485,8 @@ namespace ChanceCraft
                             var rm = invType.GetMethod(name, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
                             if (rm != null && rm.GetParameters().Length == 0)
                             {
-                                try { rm.Invoke(invObj, null); UnityEngine.Debug.LogWarning($"[ChanceCraft] RefreshCraftingPanel: invoked player-inventory {name}()"); } catch { }
+                                if (_loggingEnabled.Value)
+                                    BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogDebug($"[ChanceCraft] RefreshCraftingPanel: invoked player-inventory {name}()");
                             }
                         }
                         catch { }
@@ -2411,13 +2505,14 @@ namespace ChanceCraft
             for (int i = 0; i < Math.Max(1, delayFrames); i++)
                 yield return null; // wait frames
 
-            try { RefreshCraftingPanel(gui); } catch (Exception ex) { UnityEngine.Debug.LogWarning($"[ChanceCraft] DelayedRefreshCraftingPanel exception: {ex}"); }
+            BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogWarning($"[ChanceCraft] DelayedRefreshCraftingPanel exception: {ex}");
         }
 
         // RemoveRequiredResources: compute amounts; per-level only if upgrade context
         public static void RemoveRequiredResources(InventoryGui gui, Player player, Recipe selectedRecipe, Boolean crafted, bool skipRemovingResultResource = false)
         {
-            UnityEngine.Debug.LogWarning($"[ChanceCraft] RemoveRequiredResources called recipe={RecipeInfo(selectedRecipe)} crafted={crafted} skipResult={skipRemovingResultResource}");
+            if (_loggingEnabled.Value)
+                BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogDebug($"[ChanceCraft] RemoveRequiredResources called recipe={RecipeInfo(selectedRecipe)} crafted={crafted} skipResult={skipRemovingResultResource}");
             if (player == null || selectedRecipe == null) return;
             var inventory = player.GetInventory();
             if (inventory == null) return;
@@ -2432,7 +2527,7 @@ namespace ChanceCraft
                     object value = craftUpgradeField.GetValue(gui);
                     if (value is int q && q > 1)
                         craftUpgrade = q;
-                    UnityEngine.Debug.LogWarning($"[ChanceCraft] RemoveRequiredResources: craftUpgrade={craftUpgrade}");
+                    BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogWarning($"[ChanceCraft] RemoveRequiredResources: craftUpgrade={craftUpgrade}");
                 }
                 catch { /* ignore */ }
             }
@@ -2469,7 +2564,7 @@ namespace ChanceCraft
             try
             {
                 resultName = selectedRecipe.m_item?.m_itemData?.m_shared?.m_name;
-                UnityEngine.Debug.LogWarning($"[ChanceCraft] RemoveRequiredResources: resultName='{resultName}'");
+                BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogWarning($"[ChanceCraft] RemoveRequiredResources: resultName='{resultName}'");
             }
             catch { resultName = null; }
 
@@ -2477,7 +2572,7 @@ namespace ChanceCraft
             var resources = resourcesObj as System.Collections.IEnumerable;
             if (resources == null)
             {
-                UnityEngine.Debug.LogWarning("[ChanceCraft] RemoveRequiredResources: no resources found on recipe");
+                BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogWarning("[ChanceCraft] RemoveRequiredResources: no resources found on recipe");
                 return;
             }
 
@@ -2499,7 +2594,7 @@ namespace ChanceCraft
                         if (it == null || it.m_shared == null) continue;
                         if (!predicate(it)) continue;
                         int toRemove = Math.Min(it.m_stack, remaining);
-                        UnityEngine.Debug.LogWarning($"[ChanceCraft] RemoveAmountFromInventory: removing {toRemove} from {ItemInfo(it)} for resource '{resourceName}'");
+                        BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogWarning($"[ChanceCraft] RemoveAmountFromInventory: removing {toRemove} from {ItemInfo(it)} for resource '{resourceName}'");
                         it.m_stack -= toRemove;
                         remaining -= toRemove;
                         if (it.m_stack <= 0)
@@ -2520,20 +2615,21 @@ namespace ChanceCraft
                 }
                 catch (Exception ex)
                 {
-                    UnityEngine.Debug.LogWarning($"[ChanceCraft] RemoveAmountFromInventory: exception during attempts: {ex}");
+                    BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogWarning($"[ChanceCraft] RemoveAmountFromInventory: exception during attempts: {ex}");
                 }
 
                 if (remaining > 0)
                 {
                     try
                     {
-                        UnityEngine.Debug.LogWarning($"[ChanceCraft] RemoveAmountFromInventory: fallback RemoveItem by name '{resourceName}' remaining={remaining}");
+                        if (_loggingEnabled.Value)
+                            BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogDebug($"[ChanceCraft] RemoveAmountFromInventory: fallback RemoveItem by name '{resourceName}' remaining={remaining}");
                         inventory.RemoveItem(resourceName, remaining);
                         remaining = 0;
                     }
                     catch (Exception ex)
                     {
-                        UnityEngine.Debug.LogWarning($"[ChanceCraft] RemoveAmountFromInventory: RemoveItem exception: {ex}");
+                        BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogWarning($"[ChanceCraft] RemoveAmountFromInventory: RemoveItem exception: {ex}");
                     }
                 }
 
@@ -2569,12 +2665,14 @@ namespace ChanceCraft
                         catch { craftUpgradeVal = 1; }
                     }
                     finalAmount = perLevel * (craftUpgradeVal > 1 ? craftUpgradeVal : 1);
-                    UnityEngine.Debug.LogWarning($"[ChanceCraft] RemoveRequiredResources: using per-level amount for '{resourceName}' -> perLevel={perLevel} craftUpgrade={craftUpgradeVal} final={finalAmount}");
+                    if (_loggingEnabled.Value)
+                        BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogDebug($"[ChanceCraft] RemoveRequiredResources: using per-level amount for '{resourceName}' -> perLevel={perLevel} craftUpgrade={craftUpgradeVal} final={finalAmount}");
                 }
                 else
                 {
                     finalAmount = baseAmount;
-                    UnityEngine.Debug.LogWarning($"[ChanceCraft] RemoveRequiredResources: using base m_amount for '{resourceName}' -> {finalAmount}");
+                    if (_loggingEnabled.Value)
+                        BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogDebug($"[ChanceCraft] RemoveRequiredResources: using base m_amount for '{resourceName}' -> {finalAmount}");
                 }
 
                 if (finalAmount <= 0) continue;
@@ -2585,7 +2683,7 @@ namespace ChanceCraft
             if (skipRemovingResultResource && !string.IsNullOrEmpty(resultName))
             {
                 validReqsFiltered = validReqs.Where(v => !string.Equals(v.name, resultName, StringComparison.OrdinalIgnoreCase)).ToList();
-                UnityEngine.Debug.LogWarning($"[ChanceCraft] RemoveRequiredResources: validReqsFiltered count={validReqsFiltered.Count}");
+                BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogWarning($"[ChanceCraft] RemoveRequiredResources: validReqsFiltered count={validReqsFiltered.Count}");
             }
 
             // SINGLE-RESOURCE CASE
@@ -2594,17 +2692,18 @@ namespace ChanceCraft
                 var single = validReqs[0];
                 if (skipRemovingResultResource && !string.IsNullOrEmpty(resultName) && string.Equals(single.name, resultName, StringComparison.OrdinalIgnoreCase))
                 {
-                    UnityEngine.Debug.LogWarning("[ChanceCraft] RemoveRequiredResources: single-resource recipe is upgrade-result — skipping resource removal of result item.");
+                    if (_loggingEnabled.Value)
+                        BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogDebug("[ChanceCraft] RemoveRequiredResources: single-resource recipe is upgrade-result — skipping resource removal of result item.");
                     return;
                 }
                 try
                 {
-                    UnityEngine.Debug.LogWarning($"[ChanceCraft] RemoveRequiredResources: single-resource removal '{single.name}' amount={single.amount}");
+                    BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogWarning($"[ChanceCraft] RemoveRequiredResources: single-resource removal '{single.name}' amount={single.amount}");
                     RemoveAmountFromInventoryLocal(single.name, single.amount);
                 }
                 catch (Exception ex)
                 {
-                    UnityEngine.Debug.LogWarning($"[ChanceCraft] RemoveRequiredResources single-resource removal failed: {ex}");
+                    BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogWarning($"[ChanceCraft] RemoveRequiredResources single-resource removal failed: {ex}");
                 }
                 return;
             }
@@ -2617,7 +2716,7 @@ namespace ChanceCraft
 
                 int keepIndex = UnityEngine.Random.Range(0, validReqsFiltered.Count);
                 var keepTuple = validReqsFiltered[keepIndex];
-                UnityEngine.Debug.LogWarning($"[ChanceCraft] RemoveRequiredResources: keeping resource '{keepTuple.name}' amount={keepTuple.amount}");
+                BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogWarning($"[ChanceCraft] RemoveRequiredResources: keeping resource '{keepTuple.name}' amount={keepTuple.amount}");
 
                 bool skippedKeep = false;
                 foreach (var req in resourceList)
@@ -2632,7 +2731,7 @@ namespace ChanceCraft
                     if (skipRemovingResultResource && !string.IsNullOrEmpty(resultName) &&
                         string.Equals(resourceName, resultName, StringComparison.OrdinalIgnoreCase))
                     {
-                        UnityEngine.Debug.LogWarning($"[ChanceCraft] RemoveRequiredResources: preserving result-resource '{resourceName}'");
+                        BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogWarning($"[ChanceCraft] RemoveRequiredResources: preserving result-resource '{resourceName}'");
                         continue;
                     }
 
@@ -2643,18 +2742,19 @@ namespace ChanceCraft
                     if (!skippedKeep && resourceName == keepTuple.name && amount == keepTuple.amount)
                     {
                         skippedKeep = true;
-                        UnityEngine.Debug.LogWarning($"[ChanceCraft] RemoveRequiredResources: keep-one -> skipping '{resourceName}' amount={amount}");
+                        if (_loggingEnabled.Value)
+                            BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogDebug($"[ChanceCraft] RemoveRequiredResources: keep-one -> skipping '{resourceName}' amount={amount}");
                         continue;
                     }
 
                     try
                     {
-                        UnityEngine.Debug.LogWarning($"[ChanceCraft] RemoveRequiredResources: removing '{resourceName}' amount={amount}");
+                        BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogWarning($"[ChanceCraft] RemoveRequiredResources: removing '{resourceName}' amount={amount}");
                         RemoveAmountFromInventoryLocal(resourceName, amount);
                     }
                     catch (Exception ex)
                     {
-                        UnityEngine.Debug.LogWarning($"[ChanceCraft] RemoveRequiredResources removal failed: {ex}");
+                        BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogWarning($"[ChanceCraft] RemoveRequiredResources removal failed: {ex}");
                     }
                 }
 
@@ -2674,7 +2774,8 @@ namespace ChanceCraft
                 if (skipRemovingResultResource && !string.IsNullOrEmpty(resultName) &&
                     string.Equals(resourceName, resultName, StringComparison.OrdinalIgnoreCase))
                 {
-                    UnityEngine.Debug.LogWarning($"[ChanceCraft] RemoveRequiredResources: skipping removal of recipe-result resource '{resourceName}' on crafted=true");
+                    if (_loggingEnabled.Value)
+                        BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogDebug($"[ChanceCraft] RemoveRequiredResources: skipping removal of recipe-result resource '{resourceName}' on crafted=true");
                     continue;
                 }
 
@@ -2686,12 +2787,12 @@ namespace ChanceCraft
 
                 try
                 {
-                    UnityEngine.Debug.LogWarning($"[ChanceCraft] RemoveRequiredResources: crafted removal of '{resourceName}' amount={amount}");
+                    BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogWarning($"[ChanceCraft] RemoveRequiredResources: crafted removal of '{resourceName}' amount={amount}");
                     RemoveAmountFromInventoryLocal(resourceName, amount);
                 }
                 catch (Exception ex)
                 {
-                    UnityEngine.Debug.LogWarning($"[ChanceCraft] RemoveRequiredResources removal failed: {ex}");
+                    BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogWarning($"[ChanceCraft] RemoveRequiredResources removal failed: {ex}");
                 }
             }
         }
@@ -2780,11 +2881,12 @@ namespace ChanceCraft
                             try
                             {
                                 m.Invoke(gui, null);
-                                UnityEngine.Debug.LogWarning($"[ChanceCraft] RefreshInventoryGui: invoked {name}()");
+                                if (_loggingEnabled.Value)
+                                    BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogDebug($"[ChanceCraft] RefreshInventoryGui: invoked {name}()");
                             }
                             catch (Exception ex)
                             {
-                                UnityEngine.Debug.LogWarning($"[ChanceCraft] RefreshInventoryGui: failed invoking {name}(): {ex}");
+                                BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogWarning($"[ChanceCraft] RefreshInventoryGui: failed invoking {name}(): {ex}");
                             }
                         }
                     }
@@ -2809,7 +2911,8 @@ namespace ChanceCraft
                                 try
                                 {
                                     rmMethod.Invoke(inventoryObj, null);
-                                    UnityEngine.Debug.LogWarning($"[ChanceCraft] RefreshInventoryGui: invoked player-inventory {rm}()");
+                                    if (_loggingEnabled.Value)
+                                        BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogDebug($"[ChanceCraft] RefreshInventoryGui: invoked player-inventory {rm}()");
                                 }
                                 catch { }
                             }
@@ -2820,14 +2923,15 @@ namespace ChanceCraft
             }
             catch (Exception ex)
             {
-                UnityEngine.Debug.LogWarning($"[ChanceCraft] RefreshInventoryGui exception: {ex}");
+                BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogWarning($"[ChanceCraft] RefreshInventoryGui exception: {ex}");
             }
         }
 
         // RemoveRequiredResourcesUpgrade: prefer GUI-provided normalized requirements; fallback to recipeToUse resources (guard per-level use)
         public static void RemoveRequiredResourcesUpgrade(InventoryGui gui, Player player, Recipe selectedRecipe, ItemDrop.ItemData upgradeTargetItem, bool crafted)
         {
-            UnityEngine.Debug.LogWarning($"[ChanceCraft] RemoveRequiredResourcesUpgrade ENTRY: incoming selectedRecipe = {RecipeInfo(selectedRecipe)} (hash={selectedRecipe?.GetHashCode():X8}), upgradeTargetItem={ItemInfo(upgradeTargetItem)}, crafted={crafted}");
+            if (_loggingEnabled.Value)
+                BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogDebug($"[ChanceCraft] RemoveRequiredResourcesUpgrade ENTRY: incoming selectedRecipe = {RecipeInfo(selectedRecipe)} (hash={selectedRecipe?.GetHashCode():X8}), upgradeTargetItem={ItemInfo(upgradeTargetItem)}, crafted={crafted}");
             if (player == null || selectedRecipe == null) return;
             var inventory = player.GetInventory();
             if (inventory == null) return;
@@ -2918,7 +3022,8 @@ namespace ChanceCraft
                         if (levelsToUpgrade > 1 && guiAmt > 0 && (guiAmt % levelsToUpgrade) == 0)
                         {
                             perLevel = guiAmt / levelsToUpgrade;
-                            UnityEngine.Debug.LogWarning($"[ChanceCraft] RemoveRequiredResourcesUpgrade (fast-path): normalized stored GUI req {name}:{guiAmt} by levelsToUpgrade={levelsToUpgrade} -> {perLevel}");
+                            if (_loggingEnabled.Value)
+                                BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogDebug($"[ChanceCraft] RemoveRequiredResourcesUpgrade (fast-path): normalized stored GUI req {name}:{guiAmt} by levelsToUpgrade={levelsToUpgrade} -> {perLevel}");
                         }
                         else if (dbCandidate != null && guiAmt > 0)
                         {
@@ -2953,7 +3058,8 @@ namespace ChanceCraft
                                             if (dbPerLevel > 0)
                                             {
                                                 perLevel = dbPerLevel;
-                                                UnityEngine.Debug.LogWarning($"[ChanceCraft] RemoveRequiredResourcesUpgrade (fast-path): using DB m_amountPerLevel={dbPerLevel} for {name}");
+                                                if (_loggingEnabled.Value)
+                                                    BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogDebug($"[ChanceCraft] RemoveRequiredResourcesUpgrade (fast-path): using DB m_amountPerLevel={dbPerLevel} for {name}");
                                             }
                                             else
                                             {
@@ -2966,12 +3072,14 @@ namespace ChanceCraft
                                                     if (levelsToUpgrade > 1 && (dbAmount % levelsToUpgrade) == 0)
                                                     {
                                                         perLevel = dbAmount / levelsToUpgrade;
-                                                        UnityEngine.Debug.LogWarning($"[ChanceCraft] RemoveRequiredResourcesUpgrade (fast-path): inferred per-level from DB m_amount {dbAmount} / levels {levelsToUpgrade} -> {perLevel}");
+                                                        if (_loggingEnabled.Value)
+                                                            BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogDebug($"[ChanceCraft] RemoveRequiredResourcesUpgrade (fast-path): inferred per-level from DB m_amount {dbAmount} / levels {levelsToUpgrade} -> {perLevel}");
                                                     }
                                                     else if (dbAmount < guiAmt)
                                                     {
                                                         perLevel = dbAmount;
-                                                        UnityEngine.Debug.LogWarning($"[ChanceCraft] RemoveRequiredResourcesUpgrade (fast-path): using DB m_amount={dbAmount} for {name} (fallback)");
+                                                        if (_loggingEnabled.Value)
+                                                            BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogDebug($"[ChanceCraft] RemoveRequiredResourcesUpgrade (fast-path): using DB m_amount={dbAmount} for {name} (fallback)");
                                                     }
                                                 }
                                             }
@@ -2995,13 +3103,14 @@ namespace ChanceCraft
                 {
                     try
                     {
-                        UnityEngine.Debug.LogWarning($"[ChanceCraft] RemoveRequiredResourcesUpgrade (fast-path): removing '{rr.name}' amount={rr.amount} (GUI-provided normalized) skipping target={ItemInfo(upgradeTargetItem)}");
+                        if (_loggingEnabled.Value)
+                            BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogDebug($"[ChanceCraft] RemoveRequiredResourcesUpgrade (fast-path): removing '{rr.name}' amount={rr.amount} (GUI-provided normalized) skipping target={ItemInfo(upgradeTargetItem)}");
                         int removed = RemoveAmountFromInventorySkippingTarget(inventory, upgradeTargetItem, rr.name, rr.amount);
-                        UnityEngine.Debug.LogWarning($"[ChanceCraft] RemoveRequiredResourcesUpgrade (fast-path): removed {removed}/{rr.amount} of '{rr.name}'");
+                        BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogWarning($"[ChanceCraft] RemoveRequiredResourcesUpgrade (fast-path): removed {removed}/{rr.amount} of '{rr.name}'");
                     }
                     catch (Exception ex)
                     {
-                        UnityEngine.Debug.LogWarning($"[ChanceCraft] RemoveRequiredResourcesUpgrade (fast-path) per-resource exception: {ex}");
+                        BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogWarning($"[ChanceCraft] RemoveRequiredResourcesUpgrade (fast-path) per-resource exception: {ex}");
                     }
                 }
 
@@ -3014,22 +3123,25 @@ namespace ChanceCraft
             if (haveGuiReqs && guiReqs != null && guiReqs.Count > 0)
             {
                 var dbgJoined = string.Join(", ", guiReqs.Select(x => x.name + ":" + x.amount));
-                UnityEngine.Debug.LogWarning($"[ChanceCraft] RemoveRequiredResourcesUpgrade: using GUI-provided requirements: {dbgJoined}");
+                if (_loggingEnabled.Value)
+                    BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogDebug($"[ChanceCraft] RemoveRequiredResourcesUpgrade: using GUI-provided requirements: {dbgJoined}");
             }
             else
             {
-                UnityEngine.Debug.LogWarning("[ChanceCraft] RemoveRequiredResourcesUpgrade: no GUI-provided requirements found (will try ObjectDB candidate or fallback to recipe resources).");
+                if (_loggingEnabled.Value)
+                    BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogDebug("[ChanceCraft] RemoveRequiredResourcesUpgrade: no GUI-provided requirements found (will try ObjectDB candidate or fallback to recipe resources).");
             }
 
             // Determine the recipe to use for fallback reading / logging
             var guiRecipeNow = GetUpgradeRecipeFromGui(gui);
-            UnityEngine.Debug.LogWarning($"[ChanceCraft] RemoveRequiredResourcesUpgrade: GetUpgradeRecipeFromGui returned: {(guiRecipeNow != null ? RecipeInfo(guiRecipeNow) : "<null>")}");
-            UnityEngine.Debug.LogWarning($"[ChanceCraft] RemoveRequiredResourcesUpgrade: _upgradeGuiRecipe={(_upgradeGuiRecipe != null ? RecipeInfo(_upgradeGuiRecipe) : "<null>")}, _upgradeRecipe={(_upgradeRecipe != null ? RecipeInfo(_upgradeRecipe) : "<null>")}");
+            BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogWarning($"[ChanceCraft] RemoveRequiredResourcesUpgrade: GetUpgradeRecipeFromGui returned: {(guiRecipeNow != null ? RecipeInfo(guiRecipeNow) : "<null>")}");
+            BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogWarning($"[ChanceCraft] RemoveRequiredResourcesUpgrade: _upgradeGuiRecipe={(_upgradeGuiRecipe != null ? RecipeInfo(_upgradeGuiRecipe) : "<null>")}, _upgradeRecipe={(_upgradeRecipe != null ? RecipeInfo(_upgradeRecipe) : "<null>")}");
             Recipe recipeToUse = selectedRecipe;
             if (guiRecipeNow != null) recipeToUse = guiRecipeNow;
             else if (_upgradeGuiRecipe != null) recipeToUse = _upgradeGuiRecipe;
             else if (_upgradeRecipe != null) recipeToUse = _upgradeRecipe;
-            UnityEngine.Debug.LogWarning($"[ChanceCraft] RemoveRequiredResourcesUpgrade: initial recipeToUse = {RecipeInfo(recipeToUse)} (hash={recipeToUse?.GetHashCode():X8})");
+            if (_loggingEnabled.Value)
+                BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogDebug($"[ChanceCraft] RemoveRequiredResourcesUpgrade: initial recipeToUse = {RecipeInfo(recipeToUse)} (hash={recipeToUse?.GetHashCode():X8})");
 
             // If GUI had no separate list, and recipeToUse is the same as crafting recipe, attempt to find an ObjectDB candidate (upgrade recipe)
             if ((!haveGuiReqs || guiReqs == null || guiReqs.Count == 0) && ReferenceEquals(recipeToUse, selectedRecipe))
@@ -3040,16 +3152,18 @@ namespace ChanceCraft
                     if (candidate != null)
                     {
                         recipeToUse = candidate;
-                        UnityEngine.Debug.LogWarning($"[ChanceCraft] RemoveRequiredResourcesUpgrade: using ObjectDB candidate recipe {RecipeInfo(candidate)}");
+                        if (_loggingEnabled.Value)
+                            BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogDebug($"[ChanceCraft] RemoveRequiredResourcesUpgrade: using ObjectDB candidate recipe {RecipeInfo(candidate)}");
                     }
                     else
                     {
-                        UnityEngine.Debug.LogWarning("[ChanceCraft] RemoveRequiredResourcesUpgrade: no suitable ObjectDB candidate found (will fall back to craft recipe resources).");
+                        if (_loggingEnabled.Value)
+                            BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogDebug("[ChanceCraft] RemoveRequiredResourcesUpgrade: no suitable ObjectDB candidate found (will fall back to craft recipe resources).");
                     }
                 }
                 catch (Exception ex)
                 {
-                    UnityEngine.Debug.LogWarning($"[ChanceCraft] RemoveRequiredResourcesUpgrade: FindBestUpgradeRecipeCandidate exception: {ex}");
+                    BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogWarning($"[ChanceCraft] RemoveRequiredResourcesUpgrade: FindBestUpgradeRecipeCandidate exception: {ex}");
                 }
             }
 
@@ -3138,7 +3252,8 @@ namespace ChanceCraft
                                 if (q == desiredQuality)
                                 {
                                     dbCandidate = r;
-                                    UnityEngine.Debug.LogWarning($"[ChanceCraft] RemoveRequiredResourcesUpgrade: selected DB candidate by exact quality match (next-level) -> {RecipeInfo(r)}");
+                                    if (_loggingEnabled.Value)
+                                        BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogDebug($"[ChanceCraft] RemoveRequiredResourcesUpgrade: selected DB candidate by exact quality match (next-level) -> {RecipeInfo(r)}");
                                     break;
                                 }
                             }
@@ -3162,7 +3277,8 @@ namespace ChanceCraft
                     if (levelsToUpgrade > 1 && guiAmt > 0 && (guiAmt % levelsToUpgrade) == 0)
                     {
                         perLevel = guiAmt / levelsToUpgrade;
-                        UnityEngine.Debug.LogWarning($"[ChanceCraft] RemoveRequiredResourcesUpgrade: normalized GUI req {g.name}:{guiAmt} by levelsToUpgrade={levelsToUpgrade} -> {perLevel}");
+                        if (_loggingEnabled.Value)
+                            BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogDebug($"[ChanceCraft] RemoveRequiredResourcesUpgrade: normalized GUI req {g.name}:{guiAmt} by levelsToUpgrade={levelsToUpgrade} -> {perLevel}");
                     }
                     else if (dbCandidate != null && guiAmt > 0)
                     {
@@ -3198,7 +3314,8 @@ namespace ChanceCraft
                                         {
                                             // Use the DB per-level amount (most authoritative for upgrades)
                                             perLevel = dbPerLevel;
-                                            UnityEngine.Debug.LogWarning($"[ChanceCraft] RemoveRequiredResourcesUpgrade: using DB m_amountPerLevel={dbPerLevel} for {g.name}");
+                                            if (_loggingEnabled.Value)
+                                                BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogDebug($"[ChanceCraft] RemoveRequiredResourcesUpgrade: using DB m_amountPerLevel={dbPerLevel} for {g.name}");
                                         }
                                         else
                                         {
@@ -3212,13 +3329,15 @@ namespace ChanceCraft
                                                 if (levelsToUpgrade > 1 && (dbAmount % levelsToUpgrade) == 0)
                                                 {
                                                     perLevel = dbAmount / levelsToUpgrade;
-                                                    UnityEngine.Debug.LogWarning($"[ChanceCraft] RemoveRequiredResourcesUpgrade: inferred per-level from DB m_amount {dbAmount} / levels {levelsToUpgrade} -> {perLevel}");
+                                                    if (_loggingEnabled.Value)
+                                                        BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogDebug($"[ChanceCraft] RemoveRequiredResourcesUpgrade: inferred per-level from DB m_amount {dbAmount} / levels {levelsToUpgrade} -> {perLevel}");
                                                 }
                                                 else if (dbAmount < guiAmt)
                                                 {
                                                     // If DB reports a smaller total than GUI and doesn't divide cleanly, prefer dbAmount (likely more authoritative)
                                                     perLevel = dbAmount;
-                                                    UnityEngine.Debug.LogWarning($"[ChanceCraft] RemoveRequiredResourcesUpgrade: using DB m_amount={dbAmount} for {g.name} (fallback)");
+                                                    if (_loggingEnabled.Value)
+                                                        BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogDebug($"[ChanceCraft] RemoveRequiredResourcesUpgrade: using DB m_amount={dbAmount} for {g.name} (fallback)");
                                                 }
                                             }
                                         }
@@ -3233,7 +3352,8 @@ namespace ChanceCraft
                     }
 
                     validReqs.Add((null, g.name, perLevel));
-                    UnityEngine.Debug.LogWarning($"[ChanceCraft] RemoveRequiredResourcesUpgrade: GUI req '{g.name}' normalized amount={perLevel} (guiTotal={guiAmt})");
+                    if (_loggingEnabled.Value)
+                        BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogDebug($"[ChanceCraft] RemoveRequiredResourcesUpgrade: GUI req '{g.name}' normalized amount={perLevel} (guiTotal={guiAmt})");
                 }
             }
             else
@@ -3303,29 +3423,31 @@ namespace ChanceCraft
                                     }
 
                                     amount = perLevel * levelsToUpgrade;
-                                    UnityEngine.Debug.LogWarning($"[ChanceCraft] RemoveRequiredResourcesUpgrade: using per-level amount for '{resourceName}' -> perLevel={perLevel} levelsToUpgrade={levelsToUpgrade} amount={amount}");
+                                    if (_loggingEnabled.Value)
+                                        BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogDebug($"[ChanceCraft] RemoveRequiredResourcesUpgrade: using per-level amount for '{resourceName}' -> perLevel={perLevel} levelsToUpgrade={levelsToUpgrade} amount={amount}");
                                 }
                                 else
                                 {
                                     amount = baseAmount;
-                                    UnityEngine.Debug.LogWarning($"[ChanceCraft] RemoveRequiredResourcesUpgrade: using base m_amount for '{resourceName}' -> {amount}");
+                                    if (_loggingEnabled.Value)
+                                        BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogDebug($"[ChanceCraft] RemoveRequiredResourcesUpgrade: using base m_amount for '{resourceName}' -> {amount}");
                                 }
 
                                 if (amount <= 0) continue;
                                 validReqs.Add((req, resourceName, amount));
-                                UnityEngine.Debug.LogWarning($"[ChanceCraft] RemoveRequiredResourcesUpgrade: recipe req '{resourceName}' amount={amount} (base={baseAmount} perLevel={perLevel})");
+                                BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogWarning($"[ChanceCraft] RemoveRequiredResourcesUpgrade: recipe req '{resourceName}' amount={amount} (base={baseAmount} perLevel={perLevel})");
                             }
                             catch { /* ignore per-resource */ }
                         }
                     }
                     else
                     {
-                        UnityEngine.Debug.LogWarning("[ChanceCraft] RemoveRequiredResourcesUpgrade: recipeToUse has no m_resources to read.");
+                        BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogWarning("[ChanceCraft] RemoveRequiredResourcesUpgrade: recipeToUse has no m_resources to read.");
                     }
                 }
                 catch (Exception ex)
                 {
-                    UnityEngine.Debug.LogWarning($"[ChanceCraft] RemoveRequiredResourcesUpgrade: exception reading recipeToUse resources: {ex}");
+                    BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogWarning($"[ChanceCraft] RemoveRequiredResourcesUpgrade: exception reading recipeToUse resources: {ex}");
                 }
             }
 
@@ -3334,14 +3456,14 @@ namespace ChanceCraft
             try
             {
                 resultName = recipeToUse.m_item?.m_itemData?.m_shared?.m_name;
-                UnityEngine.Debug.LogWarning($"[ChanceCraft] RemoveRequiredResourcesUpgrade: recipeToUse resultName='{resultName}'");
+                BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogWarning($"[ChanceCraft] RemoveRequiredResourcesUpgrade: recipeToUse resultName='{resultName}'");
             }
             catch { resultName = null; }
 
             var validReqsFiltered2 = validReqs.Where(v => !string.Equals(v.name, resultName, StringComparison.OrdinalIgnoreCase)).ToList();
             if (validReqsFiltered2.Count == 0)
             {
-                UnityEngine.Debug.LogWarning("[ChanceCraft] RemoveRequiredResourcesUpgrade: filtered valid reqs empty (all resources were result-resource?) -> nothing to remove.");
+                BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogWarning("[ChanceCraft] RemoveRequiredResourcesUpgrade: filtered valid reqs empty (all resources were result-resource?) -> nothing to remove.");
                 return;
             }
 
@@ -3355,19 +3477,20 @@ namespace ChanceCraft
 
                     if (!string.IsNullOrEmpty(resultName) && string.Equals(name, resultName, StringComparison.OrdinalIgnoreCase))
                     {
-                        UnityEngine.Debug.LogWarning($"[ChanceCraft] RemoveRequiredResourcesUpgrade: skipping removal of result-resource '{name}' on crafted=true");
+                        if (_loggingEnabled.Value)
+                            BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogDebug($"[ChanceCraft] RemoveRequiredResourcesUpgrade: skipping removal of result-resource '{name}' on crafted=true");
                         continue;
                     }
 
                     try
                     {
-                        UnityEngine.Debug.LogWarning($"[ChanceCraft] RemoveRequiredResourcesUpgrade (crafted): removing '{name}' amount={amount}");
+                        BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogWarning($"[ChanceCraft] RemoveRequiredResourcesUpgrade (crafted): removing '{name}' amount={amount}");
                         int removed = RemoveAmountFromInventorySkippingTarget(inventory, upgradeTargetItem, name, amount);
-                        UnityEngine.Debug.LogWarning($"[ChanceCraft] RemoveRequiredResourcesUpgrade (crafted): removed {removed}/{amount} of '{name}'");
+                        BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogWarning($"[ChanceCraft] RemoveRequiredResourcesUpgrade (crafted): removed {removed}/{amount} of '{name}'");
                     }
                     catch (Exception ex)
                     {
-                        UnityEngine.Debug.LogWarning($"[ChanceCraft] RemoveRequiredResourcesUpgrade (crafted) removal failed: {ex}");
+                        BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogWarning($"[ChanceCraft] RemoveRequiredResourcesUpgrade (crafted) removal failed: {ex}");
                     }
                 }
                 return;
@@ -3376,20 +3499,21 @@ namespace ChanceCraft
             // Failure behavior (keep-one except result resource)
             if (validReqs.Count == 0)
             {
-                UnityEngine.Debug.LogWarning("[ChanceCraft] RemoveRequiredResourcesUpgrade: no valid requirements found -> nothing to remove.");
+                BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogWarning("[ChanceCraft] RemoveRequiredResourcesUpgrade: no valid requirements found -> nothing to remove.");
                 return;
             }
 
             var keepCandidates = validReqs.Where(v => !string.Equals(v.name, resultName, StringComparison.OrdinalIgnoreCase)).ToList();
             if (keepCandidates.Count == 0)
             {
-                UnityEngine.Debug.LogWarning("[ChanceCraft] RemoveRequiredResourcesUpgrade: after filtering by result-resource, no keep candidates -> nothing to remove.");
+                if (_loggingEnabled.Value)
+                    BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogDebug("[ChanceCraft] RemoveRequiredResourcesUpgrade: after filtering by result-resource, no keep candidates -> nothing to remove.");
                 return;
             }
 
             int keepIndex = UnityEngine.Random.Range(0, keepCandidates.Count);
             var keepTuple = keepCandidates[keepIndex];
-            UnityEngine.Debug.LogWarning($"[ChanceCraft] RemoveRequiredResourcesUpgrade: keepIndex={keepIndex} keepTuple={keepTuple.name}:{keepTuple.amount}");
+            BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogWarning($"[ChanceCraft] RemoveRequiredResourcesUpgrade: keepIndex={keepIndex} keepTuple={keepTuple.name}:{keepTuple.amount}");
 
             bool skippedKeep = false;
             foreach (var entry in validReqs)
@@ -3401,26 +3525,26 @@ namespace ChanceCraft
 
                 if (!string.IsNullOrEmpty(resultName) && string.Equals(resourceName, resultName, StringComparison.OrdinalIgnoreCase))
                 {
-                    UnityEngine.Debug.LogWarning($"[ChanceCraft] RemoveRequiredResourcesUpgrade: preserving result-resource '{resourceName}'");
+                    BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogWarning($"[ChanceCraft] RemoveRequiredResourcesUpgrade: preserving result-resource '{resourceName}'");
                     continue;
                 }
 
                 if (!skippedKeep && resourceName == keepTuple.name && amount == keepTuple.amount)
                 {
                     skippedKeep = true;
-                    UnityEngine.Debug.LogWarning($"[ChanceCraft] RemoveRequiredResourcesUpgrade: keeping resource '{resourceName}' amount={amount} (keep-one)");
+                    BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogWarning($"[ChanceCraft] RemoveRequiredResourcesUpgrade: keeping resource '{resourceName}' amount={amount} (keep-one)");
                     continue;
                 }
 
                 try
                 {
-                    UnityEngine.Debug.LogWarning($"[ChanceCraft] RemoveRequiredResourcesUpgrade: removing resource '{resourceName}' amount={amount}");
+                    BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogWarning($"[ChanceCraft] RemoveRequiredResourcesUpgrade: removing resource '{resourceName}' amount={amount}");
                     int removed = RemoveAmountFromInventorySkippingTarget(inventory, upgradeTargetItem, resourceName, amount);
-                    UnityEngine.Debug.LogWarning($"[ChanceCraft] RemoveRequiredResourcesUpgrade: removed {removed}/{amount} of '{resourceName}'");
+                    BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogWarning($"[ChanceCraft] RemoveRequiredResourcesUpgrade: removed {removed}/{amount} of '{resourceName}'");
                 }
                 catch (Exception ex)
                 {
-                    UnityEngine.Debug.LogWarning($"[ChanceCraft] RemoveRequiredResourcesUpgrade removal failed: {ex}");
+                    BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogWarning($"[ChanceCraft] RemoveRequiredResourcesUpgrade removal failed: {ex}");
                 }
             }
         }
@@ -3501,7 +3625,7 @@ namespace ChanceCraft
                                 try { parsedAmount = Convert.ToInt32(amountObj); } catch { parsedAmount = 0; }
                                 if (parsedAmount > 0)
                                 {
-                                    UnityEngine.Debug.LogWarning($"[ChanceCraft] TryGetRequirementsFromGui: found m_amount for resource '{resName}' -> {parsedAmount}");
+                                    BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogWarning($"[ChanceCraft] TryGetRequirementsFromGui: found m_amount for resource '{resName}' -> {parsedAmount}");
                                 }
                             }
 
@@ -3510,7 +3634,7 @@ namespace ChanceCraft
                                 try { parsedPerLevel = Convert.ToInt32(amountPerLevelObj); } catch { parsedPerLevel = 0; }
                                 if (parsedPerLevel > 0)
                                 {
-                                    UnityEngine.Debug.LogWarning($"[ChanceCraft] TryGetRequirementsFromGui: found m_amountPerLevel for resource '{resName}' -> {parsedPerLevel}");
+                                    BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogWarning($"[ChanceCraft] TryGetRequirementsFromGui: found m_amountPerLevel for resource '{resName}' -> {parsedPerLevel}");
                                 }
                             }
 
@@ -3519,12 +3643,14 @@ namespace ChanceCraft
                             if (parsedAmount > 0)
                             {
                                 amount = parsedAmount;
-                                UnityEngine.Debug.LogWarning($"[ChanceCraft] TryGetRequirementsFromGui: using m_amount for resource '{resName}' -> {amount}");
+                                if (_loggingEnabled.Value)
+                                    BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogDebug($"[ChanceCraft] TryGetRequirementsFromGui: using m_amount for resource '{resName}' -> {amount}");
                             }
                             else if (parsedPerLevel > 0)
                             {
                                 amount = parsedPerLevel;
-                                UnityEngine.Debug.LogWarning($"[ChanceCraft] TryGetRequirementsFromGui: using m_amountPerLevel (no m_amount) for '{resName}' -> {amount}");
+                                if (_loggingEnabled.Value)
+                                    BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogDebug($"[ChanceCraft] TryGetRequirementsFromGui: using m_amountPerLevel (no m_amount) for '{resName}' -> {amount}");
                             }
                             else
                             {
@@ -3555,19 +3681,19 @@ namespace ChanceCraft
                             {
                                 requirements = list;
                                 var joined = string.Join(", ", list.Select(x => x.name + ":" + x.amount));
-                                UnityEngine.Debug.LogWarning("[ChanceCraft] TryGetRequirementsFromGui: found " + list.Count + " reqs via m_reqList: " + joined);
+                                BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogWarning("[ChanceCraft] TryGetRequirementsFromGui: found " + list.Count + " reqs via m_reqList: " + joined);
                                 return true;
                             }
                             else
                             {
-                                UnityEngine.Debug.LogWarning("[ChanceCraft] TryGetRequirementsFromGui: m_reqList present but empty or could not be parsed.");
+                                BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogWarning("[ChanceCraft] TryGetRequirementsFromGui: m_reqList present but empty or could not be parsed.");
                             }
                         }
                     }
                 }
                 catch (Exception exReqList)
                 {
-                    UnityEngine.Debug.LogWarning($"[ChanceCraft] TryGetRequirementsFromGui: exception while reading m_reqList: {exReqList}");
+                    BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogWarning($"[ChanceCraft] TryGetRequirementsFromGui: exception while reading m_reqList: {exReqList}");
                 }
 
                 // (rest of method unchanged: fallback scanning wrappers/fields/properties, calling ParseRequirementEnumerable as before)
@@ -3610,7 +3736,8 @@ namespace ChanceCraft
                                 {
                                     requirements = list;
                                     var joined = string.Join(", ", list.Select(x => x.name + ":" + x.amount));
-                                    UnityEngine.Debug.LogWarning("[ChanceCraft] TryGetRequirementsFromGui: found " + list.Count + " reqs on wrapper.m_selectedRecipe: " + joined);
+                                    if (_loggingEnabled.Value)
+                                        BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogDebug("[ChanceCraft] TryGetRequirementsFromGui: found " + list.Count + " reqs on wrapper.m_selectedRecipe: " + joined);
                                     return true;
                                 }
                             }
@@ -3635,7 +3762,8 @@ namespace ChanceCraft
                                 {
                                     requirements = list;
                                     var joined = string.Join(", ", list.Select(x => x.name + ":" + x.amount));
-                                    UnityEngine.Debug.LogWarning("[ChanceCraft] TryGetRequirementsFromGui: got resources from inner recipe at wrapper path '" + path + "' -> " + joined);
+                                    if (_loggingEnabled.Value)
+                                        BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogDebug("[ChanceCraft] TryGetRequirementsFromGui: got resources from inner recipe at wrapper path '" + path + "' -> " + joined);
                                     return true;
                                 }
                             }
@@ -3643,7 +3771,7 @@ namespace ChanceCraft
                     }
                     catch (Exception ex)
                     {
-                        UnityEngine.Debug.LogWarning($"[ChanceCraft] TryGetRequirementsFromGui: error reading selectedRecipe wrapper: {ex}");
+                        BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogWarning($"[ChanceCraft] TryGetRequirementsFromGui: error reading selectedRecipe wrapper: {ex}");
                     }
                 }
 
@@ -3662,7 +3790,8 @@ namespace ChanceCraft
                         {
                             requirements = list;
                             var joined = string.Join(", ", list.Select(x => x.name + ":" + x.amount));
-                            UnityEngine.Debug.LogWarning("[ChanceCraft] TryGetRequirementsFromGui: found " + list.Count + " reqs on InventoryGui field '" + f.Name + "': " + joined);
+                            if (_loggingEnabled.Value)
+                                BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogDebug("[ChanceCraft] TryGetRequirementsFromGui: found " + list.Count + " reqs on InventoryGui field '" + f.Name + "': " + joined);
                             return true;
                         }
                     }
@@ -3683,19 +3812,19 @@ namespace ChanceCraft
                         {
                             requirements = list;
                             var joined = string.Join(", ", list.Select(x => x.name + ":" + x.amount));
-                            UnityEngine.Debug.LogWarning("[ChanceCraft] TryGetRequirementsFromGui: found " + list.Count + " reqs on InventoryGui prop '" + p.Name + "': " + joined);
+                            BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogWarning("[ChanceCraft] TryGetRequirementsFromGui: found " + list.Count + " reqs on InventoryGui prop '" + p.Name + "': " + joined);
                             return true;
                         }
                     }
                     catch { /* ignore per-prop */ }
                 }
 
-                UnityEngine.Debug.LogWarning("[ChanceCraft] TryGetRequirementsFromGui: no GUI-provided requirements found.");
+                BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogWarning("[ChanceCraft] TryGetRequirementsFromGui: no GUI-provided requirements found.");
                 return false;
             }
             catch (Exception ex)
             {
-                UnityEngine.Debug.LogWarning($"[ChanceCraft] TryGetRequirementsFromGui exception: {ex}");
+                BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogWarning($"[ChanceCraft] TryGetRequirementsFromGui exception: {ex}");
                 requirements = null;
                 return false;
             }
@@ -3707,7 +3836,7 @@ namespace ChanceCraft
             try
             {
                 var t = typeof(InventoryGui);
-                UnityEngine.Debug.LogWarning($"[ChanceCraft] LogInventoryGuiStructure: Inspecting InventoryGui instance of type {t.FullName}");
+                BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogWarning($"[ChanceCraft] LogInventoryGuiStructure: Inspecting InventoryGui instance of type {t.FullName}");
 
                 foreach (var f in t.GetFields(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic))
                 {
@@ -3716,7 +3845,8 @@ namespace ChanceCraft
                         object val = f.GetValue(gui);
                         if (val == null)
                         {
-                            UnityEngine.Debug.LogWarning($"[ChanceCraft] IG.field {f.Name}: <null> type={f.FieldType.FullName}");
+                            if (_loggingEnabled.Value)
+                                BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogDebug($"[ChanceCraft] IG.field {f.Name}: <null> type={f.FieldType.FullName}");
                             continue;
                         }
                         string typeName = val.GetType().FullName;
@@ -3731,16 +3861,18 @@ namespace ChanceCraft
                                 else elems.Append($"{e.GetType().Name}:{e},");
                                 count++;
                             }
-                            UnityEngine.Debug.LogWarning($"[ChanceCraft] IG.field {f.Name}: type={typeName} enumerable sampleCount={count} sample=[{elems}]");
+                            if (_loggingEnabled.Value)
+                                BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogDebug($"[ChanceCraft] IG.field {f.Name}: type={typeName} enumerable sampleCount={count} sample=[{elems}]");
                         }
                         else
                         {
-                            UnityEngine.Debug.LogWarning($"[ChanceCraft] IG.field {f.Name}: type={typeName} valueToString='{val}'");
+                            if (_loggingEnabled.Value)
+                                BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogDebug($"[ChanceCraft] IG.field {f.Name}: type={typeName} valueToString='{val}'");
                         }
                     }
                     catch (Exception ex)
                     {
-                        UnityEngine.Debug.LogWarning($"[ChanceCraft] IG.field {f.Name}: Exception reading: {ex}");
+                        BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogWarning($"[ChanceCraft] IG.field {f.Name}: Exception reading: {ex}");
                     }
                 }
 
@@ -3748,12 +3880,12 @@ namespace ChanceCraft
                 {
                     try
                     {
-                        if (p.GetIndexParameters().Length > 0) { UnityEngine.Debug.LogWarning($"[ChanceCraft] IG.prop {p.Name}: indexed (skip)"); continue; }
+                        BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogWarning($"[ChanceCraft] IG.prop {p.Name}: indexed (skip)");
                         object val = null;
-                        try { val = p.GetValue(gui); } catch (Exception e) { UnityEngine.Debug.LogWarning($"[ChanceCraft] IG.prop {p.Name}: exception getting value: {e}"); continue; }
+                        BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogWarning($"[ChanceCraft] IG.prop {p.Name}: exception getting value: {e}");
                         if (val == null)
                         {
-                            UnityEngine.Debug.LogWarning($"[ChanceCraft] IG.prop {p.Name}: <null> type={p.PropertyType.FullName}");
+                            BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogWarning($"[ChanceCraft] IG.prop {p.Name}: <null> type={p.PropertyType.FullName}");
                             continue;
                         }
                         string typeName = val.GetType().FullName;
@@ -3768,22 +3900,22 @@ namespace ChanceCraft
                                 else elems.Append($"{e.GetType().Name}:{e},");
                                 count++;
                             }
-                            UnityEngine.Debug.LogWarning($"[ChanceCraft] IG.prop {p.Name}: type={typeName} enumerable sampleCount={count} sample=[{elems}]");
+                            BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogWarning($"[ChanceCraft] IG.prop {p.Name}: type={typeName} enumerable sampleCount={count} sample=[{elems}]");
                         }
                         else
                         {
-                            UnityEngine.Debug.LogWarning($"[ChanceCraft] IG.prop {p.Name}: type={typeName} valueToString='{val}'");
+                            BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogWarning($"[ChanceCraft] IG.prop {p.Name}: type={typeName} valueToString='{val}'");
                         }
                     }
                     catch (Exception ex)
                     {
-                        UnityEngine.Debug.LogWarning($"[ChanceCraft] IG.prop {p.Name}: Exception reading: {ex}");
+                        BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogWarning($"[ChanceCraft] IG.prop {p.Name}: Exception reading: {ex}");
                     }
                 }
             }
             catch (Exception ex)
             {
-                UnityEngine.Debug.LogWarning($"[ChanceCraft] LogInventoryGuiStructure exception: {ex}");
+                BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogWarning($"[ChanceCraft] LogInventoryGuiStructure exception: {ex}");
             }
         }
 
@@ -3912,7 +4044,7 @@ namespace ChanceCraft
                 }
                 catch (Exception ex)
                 {
-                    UnityEngine.Debug.LogWarning($"[ChanceCraft] ForceGuiHardRefresh: reflection scan exception: {ex}");
+                    BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogWarning($"[ChanceCraft] ForceGuiHardRefresh: reflection scan exception: {ex}");
                 }
 
                 // 4) As a fallback, toggle the InventoryGui gameObject itself (forces full redraw)
@@ -3938,7 +4070,7 @@ namespace ChanceCraft
             }
             catch (Exception ex)
             {
-                UnityEngine.Debug.LogWarning($"[ChanceCraft] ForceGuiHardRefresh exception: {ex}");
+                BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogWarning($"[ChanceCraft] ForceGuiHardRefresh exception: {ex}");
             }
         }
 
@@ -3970,7 +4102,8 @@ namespace ChanceCraft
                         var m = t.GetMethod(name, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
                         if (m != null && m.GetParameters().Length == 0)
                         {
-                            try { m.Invoke(gui, null); UnityEngine.Debug.LogWarning($"[ChanceCraft] RefreshUpgradeTabInner: invoked InventoryGui.{name}()"); } catch { }
+                            if (_loggingEnabled.Value)
+                                BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogDebug($"[ChanceCraft] RefreshUpgradeTabInner: invoked InventoryGui.{name}()");
                         }
                     }
                     catch { /* ignore */ }
@@ -4010,7 +4143,8 @@ namespace ChanceCraft
                             var m = wt.GetMethod(name, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
                             if (m != null && m.GetParameters().Length == 0)
                             {
-                                try { m.Invoke(wrapper, null); UnityEngine.Debug.LogWarning($"[ChanceCraft] RefreshUpgradeTabInner: invoked wrapper.{name}()"); } catch { }
+                                if (_loggingEnabled.Value)
+                                    BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogDebug($"[ChanceCraft] RefreshUpgradeTabInner: invoked wrapper.{name}()");
                             }
                         }
                         catch { /* ignore per-method */ }
@@ -4027,7 +4161,8 @@ namespace ChanceCraft
                                 var val = rp.GetValue(wrapper);
                                 rp.SetValue(wrapper, null);
                                 rp.SetValue(wrapper, val);
-                                UnityEngine.Debug.LogWarning("[ChanceCraft] RefreshUpgradeTabInner: toggled wrapper.Recipe to force UI rebind");
+                                if (_loggingEnabled.Value)
+                                    BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogDebug("[ChanceCraft] RefreshUpgradeTabInner: toggled wrapper.Recipe to force UI rebind");
                             }
                             catch { /* best-effort */ }
                         }
@@ -4053,7 +4188,8 @@ namespace ChanceCraft
                                     var m = rt.GetMethod(name, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
                                     if (m != null && m.GetParameters().Length == 0)
                                     {
-                                        try { m.Invoke(reqObj, null); UnityEngine.Debug.LogWarning($"[ChanceCraft] RefreshUpgradeTabInner: invoked reqObj.{name}()"); } catch { }
+                                        if (_loggingEnabled.Value)
+                                            BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogDebug($"[ChanceCraft] RefreshUpgradeTabInner: invoked reqObj.{name}()");
                                     }
                                 }
                                 catch { /* ignore per-method */ }
@@ -4067,18 +4203,18 @@ namespace ChanceCraft
                 try
                 {
                     gui.StartCoroutine(DelayedRefreshCraftingPanel(gui, 1));
-                    UnityEngine.Debug.LogWarning("[ChanceCraft] RefreshUpgradeTabInner: scheduled DelayedRefreshCraftingPanel(gui,1)");
+                    BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogWarning("[ChanceCraft] RefreshUpgradeTabInner: scheduled DelayedRefreshCraftingPanel(gui,1)");
                 }
                 catch (Exception ex)
                 {
-                    UnityEngine.Debug.LogWarning($"[ChanceCraft] RefreshUpgradeTabInner: could not start coroutine: {ex}");
+                    BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogWarning($"[ChanceCraft] RefreshUpgradeTabInner: could not start coroutine: {ex}");
                     // As fallback, call synchronous RefreshCraftingPanel
                     try { RefreshCraftingPanel(gui); } catch { }
                 }
             }
             catch (Exception ex)
             {
-                UnityEngine.Debug.LogWarning($"[ChanceCraft] RefreshUpgradeTabInner: unexpected exception: {ex}");
+                BepInEx.Logging.Logger.CreateLogSource("ChanceCraft").LogWarning($"[ChanceCraft] RefreshUpgradeTabInner: unexpected exception: {ex}");
             }
         }
 
