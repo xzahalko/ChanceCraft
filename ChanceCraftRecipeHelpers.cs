@@ -104,8 +104,9 @@ namespace ChanceCraft
         // - check explicit m_craftUpgrade field on InventoryGui
         // - check whether player's inventory contains lower-quality items of the same result
         // - check whether the recipe consumes the result
-        public static bool IsUpgradeOperation(InventoryGui gui, Recipe recipe)
+        public static bool IsUpgradeOperation(object __instance, Recipe recipe)
         {
+            var gui = ChanceCraftUIHelpers.ResolveInventoryGui(__instance);
             if (recipe == null || gui == null) return false;
 
             try
@@ -151,20 +152,20 @@ namespace ChanceCraft
         // Decide whether the invocation should be treated as an UPGRADE operation.
         // Uses captured plugin state (ChanceCraftPlugin._isUpgradeDetected, _upgradeGuiRecipe, etc)
         // but also performs conservative local checks.
-        public static bool ShouldTreatAsUpgrade(InventoryGui gui, Recipe selectedRecipe, bool isUpgradeCall)
+        public static bool ShouldTreatAsUpgrade(object __instance, Recipe selectedRecipe, bool isUpgradeCall)
         {
             try
             {
                 if (isUpgradeCall) return true;
                 if (ChanceCraftPlugin._isUpgradeDetected) return true;
-                if (IsUpgradeOperation(gui, selectedRecipe)) return true;
+                if (IsUpgradeOperation(__instance, selectedRecipe)) return true;
 
                 bool guiHasUpgradeRecipe = false;
-                try { guiHasUpgradeRecipe = ChanceCraftUIHelpers.GetUpgradeRecipeFromGui(gui) != null; } catch { guiHasUpgradeRecipe = false; }
+                try { guiHasUpgradeRecipe = ChanceCraftUIHelpers.GetUpgradeRecipeFromGui(__instance) != null; } catch { guiHasUpgradeRecipe = false; }
 
                 // Determine the candidate target item (captured or currently selected)
                 ItemDrop.ItemData target = null;
-                try { target = ChanceCraftPlugin._upgradeTargetItem ?? GetSelectedInventoryItem(gui); } catch { target = ChanceCraftPlugin._upgradeTargetItem; }
+                try { target = ChanceCraftPlugin._upgradeTargetItem ?? GetSelectedInventoryItem(__instance); } catch { target = ChanceCraftPlugin._upgradeTargetItem; }
 
                 // If we have no target, don't treat as upgrade (conservative)
                 if (target == null) return false;
@@ -232,9 +233,11 @@ namespace ChanceCraft
         }
 
         // Attempt to extract the currently selected inventory item from InventoryGui (robust reflection fallback)
-        private static ItemDrop.ItemData GetSelectedInventoryItem(InventoryGui gui)
+        private static ItemDrop.ItemData GetSelectedInventoryItem(object __instance)
         {
+            var gui = ChanceCraftUIHelpers.ResolveInventoryGui(__instance);
             if (gui == null) return null;
+
             object TryGet(string name)
             {
                 var t = typeof(InventoryGui);

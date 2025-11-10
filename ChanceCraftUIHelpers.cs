@@ -23,6 +23,25 @@ namespace ChanceCraft
             if (ChanceCraftPlugin.loggingEnabled?.Value ?? false) UnityEngine.Debug.Log($"[ChanceCraft] {msg}");
         }
 
+        // Resolve a possibly-Harmony-injected instance into an InventoryGui reference.
+        // Public so other helper files can call it when they adopt the __instance-based pattern.
+        public static InventoryGui ResolveInventoryGui(object instance)
+        {
+            if (instance == null) return null;
+            if (instance is InventoryGui g) return g;
+            if (instance is Component comp)
+            {
+                // try to find an InventoryGui on the component or in its parents/children
+                var ig = comp.GetComponent<InventoryGui>();
+                if (ig != null) return ig;
+                ig = comp.GetComponentInParent<InventoryGui>(true);
+                if (ig != null) return ig;
+                ig = comp.GetComponentInChildren<InventoryGui>(true);
+                return ig;
+            }
+            return null;
+        }
+
         // Try to extract Recipe embedded in wrapper objects using BFS (non-generic Queue fallback)
         public static bool TryExtractRecipeFromWrapper(object wrapper, Recipe excludeRecipe, out Recipe foundRecipe, out string foundPath, int maxDepth = 3)
         {
@@ -171,8 +190,9 @@ namespace ChanceCraft
         }
 
         // Robust method to find upgrade recipe in InventoryGui (moved from main file)
-        public static Recipe GetUpgradeRecipeFromGui(InventoryGui gui)
+        public static Recipe GetUpgradeRecipeFromGui(object __instance)
         {
+            var gui = ResolveInventoryGui(__instance);
             if (gui == null) return null;
             try
             {
@@ -250,8 +270,9 @@ namespace ChanceCraft
 
         #region GUI refresh & requirement parsing (moved)
 
-        public static void RefreshCraftingPanel(InventoryGui gui)
+        public static void RefreshCraftingPanel(object __instance)
         {
+            var gui = ResolveInventoryGui(__instance);
             if (gui == null) return;
             var t = gui.GetType();
 
@@ -312,8 +333,9 @@ namespace ChanceCraft
             catch { }
         }
 
-        public static void RefreshInventoryGui(InventoryGui gui)
+        public static void RefreshInventoryGui(object __instance)
         {
+            var gui = ResolveInventoryGui(__instance);
             if (gui == null) return;
             var t = gui.GetType();
             var candidates = new[]
@@ -354,9 +376,10 @@ namespace ChanceCraft
             catch { }
         }
 
-        public static bool TryGetRequirementsFromGui(InventoryGui gui, out List<(string name, int amount)> requirements)
+        public static bool TryGetRequirementsFromGui(object __instance, out List<(string name, int amount)> requirements)
         {
             requirements = null;
+            var gui = ResolveInventoryGui(__instance);
             if (gui == null) return false;
 
             try
@@ -538,8 +561,9 @@ namespace ChanceCraft
             }
         }
 
-        public static void RefreshUpgradeTabInner(InventoryGui gui)
+        public static void RefreshUpgradeTabInner(object __instance)
         {
+            var gui = ResolveInventoryGui(__instance);
             if (gui == null) return;
             try
             {
@@ -648,13 +672,13 @@ namespace ChanceCraft
 
                 try
                 {
-                    gui.StartCoroutine(DelayedRefreshCraftingPanel(gui, 1));
+                    gui.StartCoroutine(DelayedRefreshCraftingPanel(__instance, 1));
                     LogWarning("[ChanceCraft] RefreshUpgradeTabInner: scheduled DelayedRefreshCraftingPanel(gui,1)");
                 }
                 catch (Exception ex)
                 {
                     LogWarning($"[ChanceCraft] RefreshUpgradeTabInner: could not start coroutine: {ex}");
-                    try { RefreshCraftingPanel(gui); } catch { }
+                    try { RefreshCraftingPanel(__instance); } catch { }
                 }
             }
             catch (Exception ex)
@@ -663,22 +687,24 @@ namespace ChanceCraft
             }
         }
 
-        public static void ForceSimulateTabSwitchRefresh(InventoryGui gui)
+        public static void ForceSimulateTabSwitchRefresh(object __instance)
         {
+            var gui = ResolveInventoryGui(__instance);
             if (gui == null) return;
             try
             {
-                gui.StartCoroutine(ForceSimulateTabSwitchRefreshCoroutine(gui));
+                gui.StartCoroutine(ForceSimulateTabSwitchRefreshCoroutine(__instance));
             }
             catch (Exception ex)
             {
                 LogWarning($"[ChanceCraft] ForceSimulateTabSwitchRefresh: failed to start coroutine: {ex}");
-                try { RefreshUpgradeTabInner(gui); } catch { }
+                try { RefreshUpgradeTabInner(__instance); } catch { }
             }
         }
 
-        private static IEnumerator ForceSimulateTabSwitchRefreshCoroutine(InventoryGui gui)
+        private static IEnumerator ForceSimulateTabSwitchRefreshCoroutine(object __instance)
         {
+            var gui = ResolveInventoryGui(__instance);
             if (gui == null) yield break;
 
             object TryGetMember(string name)
@@ -766,7 +792,7 @@ namespace ChanceCraft
 
             if (backButton == null && backToggle == null)
             {
-                try { RefreshUpgradeTabInner(gui); } catch { }
+                try { RefreshUpgradeTabInner(__instance); } catch { }
                 yield break;
             }
 
@@ -815,20 +841,20 @@ namespace ChanceCraft
             }
 
             yield return null;
-            try { RefreshUpgradeTabInner(gui); } catch { }
-            try { RefreshInventoryGui(gui); } catch { }
-            try { RefreshCraftingPanel(gui); } catch { }
+            try { RefreshUpgradeTabInner(__instance); } catch { }
+            try { RefreshInventoryGui(__instance); } catch { }
+            try { RefreshCraftingPanel(__instance); } catch { }
 
             yield break;
         }
 
-        public static IEnumerator DelayedRefreshCraftingPanel(InventoryGui gui, int delayFrames = 1)
+        public static IEnumerator DelayedRefreshCraftingPanel(object __instance, int delayFrames = 1)
         {
+            var gui = ResolveInventoryGui(__instance);
             if (gui == null) yield break;
             for (int i = 0; i < Math.Max(1, delayFrames); i++) yield return null;
-            try { RefreshCraftingPanel(gui); } catch { }
+            try { RefreshCraftingPanel(__instance); } catch { }
         }
         #endregion
     }
 }
-#endregion

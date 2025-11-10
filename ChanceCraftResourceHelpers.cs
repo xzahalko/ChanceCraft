@@ -135,8 +135,10 @@ namespace ChanceCraft
         }
 
         // RemoveRequiredResources: general removal for non-upgrade crafting
-        public static void RemoveRequiredResources(InventoryGui gui, Player player, Recipe selectedRecipe, bool crafted, bool skipRemovingResultResource = false)
+        // NOTE: changed to accept Harmony instance (object __instance) and resolve InventoryGui internally.
+        public static void RemoveRequiredResources(object __instance, Player player, Recipe selectedRecipe, bool crafted, bool skipRemovingResultResource = false)
         {
+            var gui = ChanceCraftUIHelpers.ResolveInventoryGui(__instance);
             if (player == null || selectedRecipe == null) return;
             var inventory = player.GetInventory();
             if (inventory == null) return;
@@ -148,7 +150,7 @@ namespace ChanceCraft
                 try
                 {
                     var recipeKeyNow = selectedRecipe != null ? ChanceCraftPlugin.RecipeFingerprint(selectedRecipe) : "null";
-                    var target = ChanceCraftPlugin._upgradeTargetItem ?? ChanceCraftPlugin.GetSelectedInventoryItem(gui);
+                    var target = ChanceCraftPlugin._upgradeTargetItem ?? ChanceCraftRecipeHelpers.GetSelectedInventoryItem(__instance);
                     var targetHash = target != null ? RuntimeHelpers.GetHashCode(target).ToString("X") : "null";
                     removalKey = $"{recipeKeyNow}|t:{targetHash}|crafted:{crafted}";
                 }
@@ -236,7 +238,7 @@ namespace ChanceCraft
                             {
                                 try
                                 {
-                                    LogInfo($"RemoveAmountFromInventoryLocal-REMOVE: removed={toRemove} from stackHash={RuntimeHelpers.GetHashCode(it):X} name={it.m_shared.m_name} q={it.m_quality} before={before} after={it.m_stack}");
+                                    LogInfo($"RemoveAmountFromInventoryLocal-REMOVE: removed={toRemove} from stackHash={RuntimeHelpers.GetHashCode(it):X} name={it.m_shared.m_name} q={it.m_quality} s_before={before} s_after={it.m_stack}");
                                 }
                                 catch { }
                             }
@@ -302,7 +304,7 @@ namespace ChanceCraft
                         int perLevel = 0;
                         try { var pl = req.GetType().GetField("m_amountPerLevel", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)?.GetValue(req); perLevel = pl != null ? Convert.ToInt32(pl) : 0; } catch { perLevel = 0; }
 
-                        bool isUpgradeNow = ChanceCraftPlugin._isUpgradeDetected || ChanceCraftRecipeHelpers.IsUpgradeOperation(gui, selectedRecipe);
+                        bool isUpgradeNow = ChanceCraftPlugin._isUpgradeDetected || ChanceCraftRecipeHelpers.IsUpgradeOperation(__instance, selectedRecipe);
                         int finalAmount;
                         if (isUpgradeNow && perLevel > 0)
                         {
@@ -394,8 +396,9 @@ namespace ChanceCraft
         }
 
         // RemoveRequiredResourcesUpgrade: prefer GUI-captured normalized requirements; fallback to recipe/ObjectDB resources
-        public static void RemoveRequiredResourcesUpgrade(InventoryGui gui, Player player, Recipe selectedRecipe, ItemDrop.ItemData upgradeTarget, bool crafted)
+        public static void RemoveRequiredResourcesUpgrade(object __instance, Player player, Recipe selectedRecipe, ItemDrop.ItemData upgradeTarget, bool crafted)
         {
+            var gui = ChanceCraftUIHelpers.ResolveInventoryGui(__instance);
             if (player == null || selectedRecipe == null) return;
             var inventory = player.GetInventory();
             if (inventory == null) return;
@@ -483,13 +486,13 @@ namespace ChanceCraft
                     {
                         var it = items[i];
                         if (it == null || it.m_shared == null) continue;
-                        if (!string.Equals(it.m_shared.m_name, resourceName, StringComparison.OrdinalIgnoreCase)) continue;
                         if (upgradeTarget != null && (ReferenceEquals(it, upgradeTarget) || RuntimeHelpers.GetHashCode(it) == RuntimeHelpers.GetHashCode(upgradeTarget))) continue;
+                        if (!string.Equals(it.m_shared.m_name, resourceName, StringComparison.OrdinalIgnoreCase)) continue;
                         int toRemove = Math.Min(it.m_stack, remaining);
                         int before = it.m_stack;
                         it.m_stack -= toRemove;
                         remaining -= toRemove;
-                        try { LogInfo($"RemoveAmountFromInventorySkippingTarget-REMOVE: removed={toRemove} from stackHash={RuntimeHelpers.GetHashCode(it):X} name={it.m_shared.m_name} q={it.m_quality}"); } catch { }
+                        try { LogInfo($"RemoveAmountFromInventorySkippingTarget-REMOVE: removed={toRemove} from stackHash={RuntimeHelpers.GetHashCode(it):X} name={it.m_shared.m_name} q={it.m_quality} s_before={before} s_after={it.m_stack}"); } catch { }
                         if (it.m_stack <= 0)
                         {
                             try { inventory.RemoveItem(it); } catch { }
@@ -507,7 +510,7 @@ namespace ChanceCraft
                             int before = it.m_stack;
                             it.m_stack -= toRemove;
                             remaining -= toRemove;
-                            try { LogInfo($"RemoveAmountFromInventorySkippingTarget-REMOVE-FALLBACK: removed={toRemove} from stackHash={RuntimeHelpers.GetHashCode(it):X} name={it.m_shared.m_name} q={it.m_quality}"); } catch { }
+                            try { LogInfo($"RemoveAmountFromInventorySkippingTarget-REMOVE-FALLBACK: removed={toRemove} from stackHash={RuntimeHelpers.GetHashCode(it):X} name={it.m_shared.m_name} q={it.m_quality} s_before={before} s_after={it.m_stack}"); } catch { }
                             if (it.m_stack <= 0)
                             {
                                 try { inventory.RemoveItem(it); } catch { }
@@ -642,8 +645,9 @@ namespace ChanceCraft
         }
 
         // Force revert after removal: tries to restore item quality in player's inventory conservatively
-        public static void ForceRevertAfterRemoval(InventoryGui gui, Recipe selectedRecipe, ItemDrop.ItemData upgradeTarget = null)
+        public static void ForceRevertAfterRemoval(object __instance, Recipe selectedRecipe, ItemDrop.ItemData upgradeTarget = null)
         {
+            var gui = ChanceCraftUIHelpers.ResolveInventoryGui(__instance);
             try
             {
                 if (selectedRecipe == null) return;
@@ -768,4 +772,3 @@ namespace ChanceCraft
         }
     }
 }
-#endregion
