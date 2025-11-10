@@ -3,276 +3,17 @@ using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
+using System.Runtime.CompilerServices;
 using UnityEngine;
 using UnityEngine.UI;
 
 namespace ChanceCraft
 {
-    // Consolidated UI helpers (refreshing UI and extracting recipes from wrappers)
+    // UI refresh / requirement parsing / revert helpers extracted from ChanceCraft.cs
     public static class ChanceCraftUIHelpers
     {
-        #region Logging & small helpers
-
-        private static void LogWarning(string msg)
+        public static void RefreshCraftingPanel(InventoryGui gui)
         {
-            if (ChanceCraftPlugin.loggingEnabled?.Value ?? false) UnityEngine.Debug.LogWarning($"[ChanceCraft] {msg}");
-        }
-
-        private static void LogInfo(string msg)
-        {
-            if (ChanceCraftPlugin.loggingEnabled?.Value ?? false) UnityEngine.Debug.Log($"[ChanceCraft] {msg}");
-        }
-
-        // Resolve a possibly-Harmony-injected instance into an InventoryGui reference.
-        // Public so other helper files can call it when they adopt the __instance-based pattern.
-        public static InventoryGui ResolveInventoryGui(object instance)
-        {
-            if (instance == null) return null;
-            if (instance is InventoryGui g) return g;
-            if (instance is Component comp)
-            {
-                // try to find an InventoryGui on the component or in its parents/children
-                var ig = comp.GetComponent<InventoryGui>();
-                if (ig != null) return ig;
-                ig = comp.GetComponentInParent<InventoryGui>(true);
-                if (ig != null) return ig;
-                ig = comp.GetComponentInChildren<InventoryGui>(true);
-                return ig;
-            }
-            return null;
-        }
-
-        // Try to extract Recipe embedded in wrapper objects using BFS (non-generic Queue fallback)
-        public static bool TryExtractRecipeFromWrapper(object wrapper, Recipe excludeRecipe, out Recipe foundRecipe, out string foundPath, int maxDepth = 3)
-        {
-            foundRecipe = null;
-            foundPath = null;
-            if (wrapper == null) return false;
-
-            try
-            {
-                var seen = new HashSet<int>();
-                var q = new System.Collections.Queue();
-                q.Enqueue(new WrapperNode(wrapper, "root", 0));
-
-                while (q.Count > 0)
-                {
-                    var nodeObj = q.Dequeue();
-                    if (!(nodeObj is WrapperNode node)) continue;
-                    var obj = node.Obj;
-                    var path = node.Path;
-                    var depth = node.Depth;
-
-                    if (obj == null) continue;
-                    int id = System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(obj);
-                    if (seen.Contains(id)) continue;
-                    seen.Add(id);
-
-                    if (obj is Recipe r)
-                    {
-                        if (!ReferenceEquals(r, excludeRecipe))
-                        {
-                            foundRecipe = r;
-                            foundPath = path;
-                            LogWarning($"TryExtractRecipeFromWrapper: found Recipe at path '{path}': {ChanceCraftPlugin.RecipeInfo(r)}");
-                            return true;
-                        }
-                    }
-
-                    if (depth >= maxDepth) continue;
-
-                    Type t = obj.GetType();
-
-                    foreach (var f in t.GetFields(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic))
-                    {
-                        try
-                        {
-                            var val = f.GetValue(obj);
-                            if (val == null) continue;
-
-                            if (typeof(Recipe).IsAssignableFrom(f.FieldType))
-                            {
-                                var maybe = val as Recipe;
-                                if (maybe != null && !ReferenceEquals(maybe, excludeRecipe))
-                                {
-                                    foundRecipe = maybe;
-                                    foundPath = $"{path}.{f.Name}";
-                                    LogWarning($"TryExtractRecipeFromWrapper: found Recipe field '{f.Name}' at path '{foundPath}' => {ChanceCraftPlugin.RecipeInfo(foundRecipe)}");
-                                    return true;
-                                }
-                            }
-
-                            if (val is IEnumerable ie && !(val is string))
-                            {
-                                int idx = 0;
-                                foreach (var elem in ie)
-                                {
-                                    if (elem == null) { idx++; continue; }
-                                    if (elem is Recipe rr && !ReferenceEquals(rr, excludeRecipe))
-                                    {
-                                        foundRecipe = rr;
-                                        foundPath = $"{path}.{f.Name}[{idx}]";
-                                        LogWarning($"TryExtractRecipeFromWrapper: found Recipe in enumerable '{f.Name}' at '{foundPath}' => {ChanceCraftPlugin.RecipeInfo(foundRecipe)}");
-                                        return true;
-                                    }
-                                    q.Enqueue(new WrapperNode(elem, $"{path}.{f.Name}[{idx}]", depth + 1));
-                                    idx++;
-                                    if (idx > 50) break;
-                                }
-                                continue;
-                            }
-
-                            q.Enqueue(new WrapperNode(val, $"{path}.{f.Name}", depth + 1));
-                        }
-                        catch { /* ignore per-field issues */ }
-                    }
-
-                    foreach (var p in t.GetProperties(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic))
-                    {
-                        try
-                        {
-                            if (p.GetIndexParameters().Length > 0) continue;
-                            if (!p.CanRead) continue;
-                            var v = p.GetValue(obj);
-                            if (v == null) continue;
-
-                            if (typeof(Recipe).IsAssignableFrom(p.PropertyType))
-                            {
-                                var maybe = v as Recipe;
-                                if (maybe != null && !ReferenceEquals(maybe, excludeRecipe))
-                                {
-                                    foundRecipe = maybe;
-                                    foundPath = $"{path}.{p.Name}";
-                                    LogWarning($"TryExtractRecipeFromWrapper: found Recipe property '{p.Name}' at path '{foundPath}' => {ChanceCraftPlugin.RecipeInfo(foundRecipe)}");
-                                    return true;
-                                }
-                            }
-
-                            if (v is IEnumerable ie2 && !(v is string))
-                            {
-                                int idx = 0;
-                                foreach (var elem in ie2)
-                                {
-                                    if (elem == null) { idx++; continue; }
-                                    if (elem is Recipe rr && !ReferenceEquals(rr, excludeRecipe))
-                                    {
-                                        foundRecipe = rr;
-                                        foundPath = $"{path}.{p.Name}[{idx}]";
-                                        LogWarning($"TryExtractRecipeFromWrapper: found Recipe in enumerable property '{p.Name}' at '{foundPath}' => {ChanceCraftPlugin.RecipeInfo(foundRecipe)}");
-                                        return true;
-                                    }
-                                    q.Enqueue(new WrapperNode(elem, $"{path}.{p.Name}[{idx}]", depth + 1));
-                                    idx++;
-                                    if (idx > 50) break;
-                                }
-                                continue;
-                            }
-
-                            q.Enqueue(new WrapperNode(v, $"{path}.{p.Name}", depth + 1));
-                        }
-                        catch { /* ignore per-property issues */ }
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                LogWarning($"TryExtractRecipeFromWrapper exception: {ex}");
-            }
-            return false;
-        }
-
-        private class WrapperNode
-        {
-            public object Obj;
-            public string Path;
-            public int Depth;
-            public WrapperNode(object obj, string path, int depth) { Obj = obj; Path = path; Depth = depth; }
-        }
-
-        // Robust method to find upgrade recipe in InventoryGui (moved from main file)
-        public static Recipe GetUpgradeRecipeFromGui(object __instance)
-        {
-            var gui = ResolveInventoryGui(__instance);
-            if (gui == null) return null;
-            try
-            {
-                var t = typeof(InventoryGui);
-                var names = new[] {
-                    "m_upgradeRecipe", "m_selectedUpgradeRecipe", "m_selectedRecipe",
-                    "m_currentRecipe", "m_selectedUpgrade", "m_selectedUpgradeRecipeData",
-                    "m_selectedUpgradeRecipePair", "m_currentUpgradeRecipe", "m_selectedRecipeData", "m_selected",
-                    "m_targetRecipe", "m_previewRecipe", "m_craftRecipe"
-                };
-
-                foreach (var name in names)
-                {
-                    try
-                    {
-                        var f = t.GetField(name, BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
-                        if (f != null)
-                        {
-                            var val = f.GetValue(gui);
-                            if (val is Recipe r) return r;
-                            if (val != null)
-                            {
-                                if (TryExtractRecipeFromWrapper(val, null, out var inner, out var path)) return inner;
-                                var prop = val.GetType().GetProperty("Recipe", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-                                if (prop != null && prop.CanRead) return prop.GetValue(val) as Recipe;
-                            }
-                        }
-
-                        var propInfo = t.GetProperty(name, BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
-                        if (propInfo != null)
-                        {
-                            var val2 = propInfo.GetValue(gui);
-                            if (val2 is Recipe r3) return r3;
-                            if (val2 != null)
-                            {
-                                if (TryExtractRecipeFromWrapper(val2, null, out var inner3, out var path3)) return inner3;
-                                var p2 = val2.GetType().GetProperty("Recipe", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-                                if (p2 != null && p2.CanRead) return p2.GetValue(val2) as Recipe;
-                            }
-                        }
-                    }
-                    catch { /* ignore candidate errors */ }
-                }
-
-                var selectedRecipeField = t.GetField("m_selectedRecipe", BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
-                if (selectedRecipeField != null)
-                {
-                    var wrapper = selectedRecipeField.GetValue(gui);
-                    if (wrapper != null)
-                    {
-                        if (TryExtractRecipeFromWrapper(wrapper, null, out var inner, out var path)) return inner;
-                        var rp = wrapper.GetType().GetProperty("Recipe", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-                        if (rp != null && rp.CanRead) return rp.GetValue(wrapper) as Recipe;
-                    }
-                }
-
-                // fallback scan
-                foreach (var f in t.GetFields(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic))
-                {
-                    try
-                    {
-                        var v = f.GetValue(gui);
-                        if (v is Recipe rr) return rr;
-                        if (v != null && TryExtractRecipeFromWrapper(v, null, out var inner2, out var p2)) return inner2;
-                    }
-                    catch { }
-                }
-            }
-            catch (Exception ex)
-            {
-                LogWarning($"GetUpgradeRecipeFromGui exception: {ex}");
-            }
-            return null;
-        }
-
-        #region GUI refresh & requirement parsing (moved)
-
-        public static void RefreshCraftingPanel(object __instance)
-        {
-            var gui = ResolveInventoryGui(__instance);
             if (gui == null) return;
             var t = gui.GetType();
 
@@ -333,9 +74,380 @@ namespace ChanceCraft
             catch { }
         }
 
-        public static void RefreshInventoryGui(object __instance)
+        public static void DumpInventoryGuiStructure(InventoryGui gui)
         {
-            var gui = ResolveInventoryGui(__instance);
+            try
+            {
+                if (gui == null) { ChanceCraftPlugin.LogInfo("DumpInventoryGuiStructure: gui is null"); return; }
+                var t = gui.GetType();
+                ChanceCraftPlugin.LogInfo("DumpInventoryGuiStructure: InventoryGui type = " + t.FullName);
+                foreach (var f in t.GetFields(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic))
+                {
+                    try
+                    {
+                        object val = null;
+                        try { val = f.GetValue(gui); } catch { val = "<unreadable>"; }
+                        string valType = val == null ? "null" : (val.GetType().FullName + (val is System.Collections.IEnumerable ? " (IEnumerable)" : ""));
+                        ChanceCraftPlugin.LogInfo($"Field: {f.Name} : {f.FieldType.FullName} => {valType}");
+                    }
+                    catch { }
+                }
+                foreach (var p in t.GetProperties(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic))
+                {
+                    try
+                    {
+                        object val = null;
+                        if (p.GetIndexParameters().Length == 0 && p.CanRead)
+                        {
+                            try { val = p.GetValue(gui); } catch { val = "<unreadable>"; }
+                        }
+                        string valType = val == null ? "null" : (val.GetType().FullName + (val is System.Collections.IEnumerable ? " (IEnumerable)" : ""));
+                        ChanceCraftPlugin.LogInfo($"Property: {p.Name} : {p.PropertyType.FullName} => {valType}");
+                    }
+                    catch { }
+                }
+
+                try
+                {
+                    var selField = t.GetField("m_selectedRecipe", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                    if (selField != null)
+                    {
+                        var selVal = selField.GetValue(gui);
+                        if (selVal != null) ChanceCraftPlugin.LogInfo("m_selectedRecipe value type = " + selVal.GetType().FullName);
+                        else ChanceCraftPlugin.LogInfo("m_selectedRecipe is null");
+                    }
+                }
+                catch { }
+
+                try
+                {
+                    var rootGo = (gui as Component)?.gameObject;
+                    if (rootGo == null) rootGo = typeof(InventoryGui).GetField("m_root", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)?.GetValue(gui) as GameObject;
+                    if (rootGo == null) ChanceCraftPlugin.LogInfo("DumpInventoryGuiStructure: gui.gameObject unknown");
+                    else
+                    {
+                        ChanceCraftPlugin.LogInfo("DumpInventoryGuiStructure: dumping child hierarchy (depth 3) for " + rootGo.name);
+                        void DumpChildren(UnityEngine.Transform tr, int depth)
+                        {
+                            if (tr == null || depth <= 0) return;
+                            for (int i = 0; i < tr.childCount; i++)
+                            {
+                                var c = tr.GetChild(i);
+                                string info = $"GO: {new string(' ', (3 - depth) * 2)}{c.name}";
+                                var btn = c.GetComponent<UnityEngine.UI.Button>();
+                                if (btn != null) info += " [Button]";
+                                var tog = c.GetComponent<UnityEngine.UI.Toggle>();
+                                if (tog != null) info += " [Toggle]";
+                                var txt = c.GetComponent<UnityEngine.UI.Text>();
+                                if (txt != null) info += $" [Text='{txt.text}']";
+                                ChanceCraftPlugin.LogInfo(info);
+                                DumpChildren(c, depth - 1);
+                            }
+                        }
+                        DumpChildren(rootGo.transform, 3);
+                    }
+                }
+                catch (Exception ex) { ChanceCraftPlugin.LogWarning("DumpInventoryGuiStructure: child dump failed: " + ex); }
+            }
+            catch (Exception ex)
+            {
+                ChanceCraftPlugin.LogWarning("DumpInventoryGuiStructure failed: " + ex);
+            }
+        }
+
+        public static void ForceSimulateTabSwitchRefresh(InventoryGui gui)
+        {
+            if (gui == null) return;
+            try
+            {
+                gui.StartCoroutine(ForceSimulateTabSwitchRefreshCoroutine(gui));
+            }
+            catch (Exception ex)
+            {
+                UnityEngine.Debug.LogWarning($"[ChanceCraft] ForceSimulateTabSwitchRefresh: failed to start coroutine: {ex}");
+                try { RefreshUpgradeTabInner(gui); } catch { }
+            }
+        }
+
+        public static void RefreshUpgradeTabInner(InventoryGui gui)
+        {
+            if (gui == null) return;
+            try
+            {
+                var t = gui.GetType();
+
+                string[] igMethods = new[]
+                {
+                    "UpdateCraftingPanel", "UpdateRecipeList", "UpdateAvailableRecipes", "UpdateCrafting",
+                    "UpdateAvailableCrafting", "UpdateRecipes", "UpdateSelectedItem", "Refresh",
+                    "RefreshList", "RefreshRequirements", "OnOpen", "OnShow"
+                };
+                foreach (var name in igMethods)
+                {
+                    try
+                    {
+                        var m = t.GetMethod(name, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                        if (m != null && m.GetParameters().Length == 0)
+                        {
+                            try { m.Invoke(gui, null); UnityEngine.Debug.LogWarning($"[ChanceCraft] RefreshUpgradeTabInner: invoked InventoryGui.{name}()"); } catch { }
+                        }
+                    }
+                    catch { /* ignore */ }
+                }
+
+                FieldInfo selField = t.GetField("m_selectedRecipe", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+                                   ?? t.GetField("m_upgradeRecipe", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+                                   ?? t.GetField("m_selectedUpgradeRecipe", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+
+                object wrapper = null;
+                if (selField != null)
+                {
+                    try { wrapper = selField.GetValue(gui); } catch { wrapper = null; }
+                }
+                else
+                {
+                    var selProp = t.GetProperty("m_selectedRecipe", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+                                  ?? t.GetProperty("SelectedRecipe", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                    if (selProp != null && selProp.CanRead)
+                    {
+                        try { wrapper = selProp.GetValue(gui); } catch { wrapper = null; }
+                    }
+                }
+
+                if (wrapper != null)
+                {
+                    var wt = wrapper.GetType();
+
+                    string[] wrapperMethods = new[] { "Refresh", "Update", "UpdateIfNeeded", "RefreshRequirements", "RefreshList", "OnChanged", "Setup" };
+                    foreach (var name in wrapperMethods)
+                    {
+                        try
+                        {
+                            var m = wt.GetMethod(name, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                            if (m != null && m.GetParameters().Length == 0)
+                            {
+                                try { m.Invoke(wrapper, null); UnityEngine.Debug.LogWarning($"[ChanceCraft] RefreshUpgradeTabInner: invoked wrapper.{name}()"); } catch { }
+                            }
+                        }
+                        catch { /* ignore per-method */ }
+                    }
+
+                    try
+                    {
+                        var rp = wt.GetProperty("Recipe", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                        if (rp != null && rp.CanRead && rp.CanWrite)
+                        {
+                            try
+                            {
+                                var val = rp.GetValue(wrapper);
+                                rp.SetValue(wrapper, null);
+                                rp.SetValue(wrapper, val);
+                                UnityEngine.Debug.LogWarning("[ChanceCraft] RefreshUpgradeTabInner: toggled wrapper.Recipe to force UI rebind");
+                            }
+                            catch { /* best-effort */ }
+                        }
+                    }
+                    catch { /* ignore */ }
+                }
+
+                try
+                {
+                    var reqField = t.GetField("m_reqList", BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public)
+                                ?? t.GetField("m_requirements", BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
+                    if (reqField != null)
+                    {
+                        var reqObj = reqField.GetValue(gui);
+                        if (reqObj != null)
+                        {
+                            var rt = reqObj.GetType();
+                            foreach (var name in new[] { "Refresh", "Update", "UpdateIfNeeded", "OnChanged" })
+                            {
+                                try
+                                {
+                                    var m = rt.GetMethod(name, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                                    if (m != null && m.GetParameters().Length == 0)
+                                    {
+                                        try { m.Invoke(reqObj, null); UnityEngine.Debug.LogWarning($"[ChanceCraft] RefreshUpgradeTabInner: invoked reqObj.{name}()"); } catch { }
+                                    }
+                                }
+                                catch { /* ignore per-method */ }
+                            }
+                        }
+                    }
+                }
+                catch { /* ignore */ }
+
+                try
+                {
+                    gui.StartCoroutine(DelayedRefreshCraftingPanel(gui, 1));
+                    UnityEngine.Debug.LogWarning("[ChanceCraft] RefreshUpgradeTabInner: scheduled DelayedRefreshCraftingPanel(gui,1)");
+                }
+                catch (Exception ex)
+                {
+                    UnityEngine.Debug.LogWarning($"[ChanceCraft] RefreshUpgradeTabInner: could not start coroutine: {ex}");
+                    try { RefreshCraftingPanel(gui); } catch { }
+                }
+            }
+            catch (Exception ex)
+            {
+                UnityEngine.Debug.LogWarning($"[ChanceCraft] RefreshUpgradeTabInner: unexpected exception: {ex}");
+            }
+        }
+
+        public static IEnumerator ForceSimulateTabSwitchRefreshCoroutine(InventoryGui gui)
+        {
+            if (gui == null) yield break;
+
+            object TryGetMember(string name)
+            {
+                try
+                {
+                    var t = gui.GetType();
+                    var f = t.GetField(name, BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
+                    if (f != null) return f.GetValue(gui);
+                    var p = t.GetProperty(name, BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
+                    if (p != null && p.CanRead) return p.GetValue(gui);
+                }
+                catch { }
+                return null;
+            }
+
+            string[] tabCandidates = new[] { "m_tabUpgrade", "m_tabCraft", "m_tabCrafting", "m_tab", "m_crafting", "m_tabPanel", "m_tabs" };
+            GameObject upgradeTabGO = null;
+            foreach (var nm in tabCandidates)
+            {
+                try
+                {
+                    var val = TryGetMember(nm);
+                    if (val != null)
+                    {
+                        if (val is GameObject g) { upgradeTabGO = g; break; }
+                        if (val is Component c) { upgradeTabGO = c.gameObject; break; }
+                        if (val is System.Collections.IEnumerable en && !(val is string))
+                        {
+                            foreach (var e in en)
+                            {
+                                if (e is GameObject ge) { upgradeTabGO = ge; break; }
+                                if (e is Component ce) { upgradeTabGO = ce.gameObject; break; }
+                            }
+                            if (upgradeTabGO != null) break;
+                        }
+                    }
+                }
+                catch { }
+            }
+
+            Button backButton = null;
+            Toggle backToggle = null;
+
+            try
+            {
+                var comp = gui as Component;
+                if (upgradeTabGO != null)
+                {
+                    backButton = upgradeTabGO.GetComponentInChildren<Button>(true);
+                    backToggle = upgradeTabGO.GetComponentInChildren<Toggle>(true);
+                }
+                else if (comp != null)
+                {
+                    var btns = comp.GetComponentsInChildren<Button>(true);
+                    var tgls = comp.GetComponentsInChildren<Toggle>(true);
+
+                    backButton = btns.FirstOrDefault(b => b.gameObject.name.IndexOf("craft", StringComparison.OrdinalIgnoreCase) >= 0
+                                                         || b.gameObject.name.IndexOf("upgrade", StringComparison.OrdinalIgnoreCase) >= 0
+                                                         || b.gameObject.name.IndexOf("tab", StringComparison.OrdinalIgnoreCase) >= 0)
+                              ?? btns.FirstOrDefault();
+                    backToggle = tgls.FirstOrDefault(t => t.gameObject.name.IndexOf("craft", StringComparison.OrdinalIgnoreCase) >= 0
+                                                         || t.gameObject.name.IndexOf("upgrade", StringComparison.OrdinalIgnoreCase) >= 0
+                                                         || t.gameObject.name.IndexOf("tab", StringComparison.OrdinalIgnoreCase) >= 0)
+                              ?? tgls.FirstOrDefault();
+                }
+            }
+            catch { }
+
+            Button awayButton = null;
+            Toggle awayToggle = null;
+            try
+            {
+                var comp = gui as Component;
+                if (comp != null)
+                {
+                    var btnsAll = comp.GetComponentsInChildren<Button>(true);
+                    var tglsAll = comp.GetComponentsInChildren<Toggle>(true);
+
+                    awayButton = btnsAll.FirstOrDefault(b => b != backButton && !b.gameObject.name.Equals("Close", StringComparison.OrdinalIgnoreCase));
+                    awayToggle = tglsAll.FirstOrDefault(t => t != backToggle);
+                }
+            }
+            catch { }
+
+            if (backButton == null && backToggle == null)
+            {
+                try { RefreshUpgradeTabInner(gui); } catch { }
+                yield break;
+            }
+
+            try
+            {
+                if (awayButton != null)
+                {
+                    try { awayButton.onClick?.Invoke(); UnityEngine.Debug.LogWarning("[ChanceCraft] ForceSimulateTabSwitch: invoked awayButton.onClick"); } catch { }
+                }
+                else if (awayToggle != null)
+                {
+                    try { awayToggle.isOn = !awayToggle.isOn; UnityEngine.Debug.LogWarning("[ChanceCraft] ForceSimulateTabSwitch: toggled awayToggle"); } catch { }
+                }
+                else
+                {
+                    try
+                    {
+                        var comp = gui as Component;
+                        var child = (comp?.transform?.childCount > 0) ? comp.transform.GetChild(0).gameObject : null;
+                        if (child != null) { child.SetActive(false); }
+                    }
+                    catch { }
+                }
+            }
+            catch (Exception ex)
+            {
+                UnityEngine.Debug.LogWarning($"[ChanceCraft] ForceSimulateTabSwitch: away-click failed: {ex}");
+            }
+
+            yield return null;
+
+            try
+            {
+                if (backButton != null)
+                {
+                    try { backButton.onClick?.Invoke(); UnityEngine.Debug.LogWarning("[ChanceCraft] ForceSimulateTabSwitch: invoked backButton.onClick"); } catch { }
+                }
+                else if (backToggle != null)
+                {
+                    try { backToggle.isOn = true; UnityEngine.Debug.LogWarning("[ChanceCraft] ForceSimulateTabSwitch: set backToggle.isOn = true"); } catch { }
+                }
+            }
+            catch (Exception ex)
+            {
+                UnityEngine.Debug.LogWarning($"[ChanceCraft] ForceSimulateTabSwitch: back-click failed: {ex}");
+            }
+
+            yield return null;
+            try { RefreshUpgradeTabInner(gui); } catch { }
+            try { RefreshInventoryGui(gui); } catch { }
+            try { RefreshCraftingPanel(gui); } catch { }
+
+            yield break;
+        }
+
+        public static IEnumerator DelayedRefreshCraftingPanel(InventoryGui gui, int delayFrames = 1)
+        {
+            if (gui == null) yield break;
+            for (int i = 0; i < Math.Max(1, delayFrames); i++) yield return null;
+            try { RefreshCraftingPanel(gui); } catch { }
+        }
+
+        public static void RefreshInventoryGui(InventoryGui gui)
+        {
             if (gui == null) return;
             var t = gui.GetType();
             var candidates = new[]
@@ -376,10 +488,10 @@ namespace ChanceCraft
             catch { }
         }
 
-        public static bool TryGetRequirementsFromGui(object __instance, out List<(string name, int amount)> requirements)
+        // TryGetRequirementsFromGui ported (parsing UI-provided requirement lists)
+        public static bool TryGetRequirementsFromGui(InventoryGui gui, out List<(string name, int amount)> requirements)
         {
             requirements = null;
-            var gui = ResolveInventoryGui(__instance);
             if (gui == null) return false;
 
             try
@@ -504,7 +616,7 @@ namespace ChanceCraft
                                 catch { }
                             }
 
-                            if (TryExtractRecipeFromWrapper(selVal, null, out var innerRecipe, out var path))
+                            if (ChanceCraftRecipeHelpers.TryExtractRecipeFromWrapper(selVal, null, out var innerRecipe, out var path))
                             {
                                 var resourcesField2 = innerRecipe?.GetType().GetField("m_resources", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
                                 var resObj = resourcesField2?.GetValue(innerRecipe) as IEnumerable;
@@ -555,307 +667,132 @@ namespace ChanceCraft
             }
             catch (Exception ex)
             {
-                LogWarning($"TryGetRequirementsFromGui exception: {ex}");
+                ChanceCraftPlugin.LogWarning($"TryGetRequirementsFromGui exception: {ex}");
                 requirements = null;
                 return false;
             }
         }
 
-        public static void RefreshUpgradeTabInner(object __instance)
+        public static void ForceRevertAfterRemoval(InventoryGui gui, Recipe selectedRecipe, ItemDrop.ItemData upgradeTarget = null)
         {
-            var gui = ResolveInventoryGui(__instance);
-            if (gui == null) return;
             try
             {
-                var t = gui.GetType();
+                if (selectedRecipe == null) return;
+                string resultName = selectedRecipe.m_item?.m_itemData?.m_shared?.m_name;
+                if (string.IsNullOrEmpty(resultName)) return;
+                int finalQuality = selectedRecipe.m_item?.m_itemData?.m_quality ?? 0;
 
-                string[] igMethods = new[]
+                int expectedPreQuality = Math.Max(0, finalQuality - 1);
+
+                try
                 {
-                    "UpdateCraftingPanel", "UpdateRecipeList", "UpdateAvailableRecipes", "UpdateCrafting",
-                    "UpdateAvailableCrafting", "UpdateRecipes", "UpdateSelectedItem", "Refresh",
-                    "RefreshList", "RefreshRequirements", "OnOpen", "OnShow"
-                };
-                foreach (var name in igMethods)
+                    if (ChanceCraft._preCraftSnapshotData != null && ChanceCraft._preCraftSnapshotData.Count > 0)
+                    {
+                        var preQs = ChanceCraft._preCraftSnapshotData.Values
+                            .Select(v => { if (ChanceCraftRecipeHelpers.TryUnpackQualityVariant(v, out int a, out int b)) return a; return 0; })
+                            .ToList();
+                        if (preQs.Count > 0) expectedPreQuality = Math.Max(0, preQs.Max());
+                    }
+                }
+                catch { }
+
+                var inv = Player.m_localPlayer?.GetInventory();
+                var all = inv?.GetAllItems();
+                if (all == null) return;
+
+                if (upgradeTarget != null)
                 {
                     try
                     {
-                        var m = t.GetMethod(name, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-                        if (m != null && m.GetParameters().Length == 0)
+                        var found = all.FirstOrDefault(it => it != null && (ReferenceEquals(it, upgradeTarget) || RuntimeHelpers.GetHashCode(it) == RuntimeHelpers.GetHashCode(upgradeTarget)));
+                        if (found != null)
                         {
-                            try { m.Invoke(gui, null); LogWarning($"[ChanceCraft] RefreshUpgradeTabInner: invoked InventoryGui.{name}()"); } catch { }
-                        }
-                    }
-                    catch { /* ignore */ }
-                }
-
-                FieldInfo selField = t.GetField("m_selectedRecipe", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
-                                   ?? t.GetField("m_upgradeRecipe", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
-                                   ?? t.GetField("m_selectedUpgradeRecipe", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-
-                object wrapper = null;
-                if (selField != null)
-                {
-                    try { wrapper = selField.GetValue(gui); } catch { wrapper = null; }
-                }
-                else
-                {
-                    var selProp = t.GetProperty("m_selectedRecipe", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
-                                  ?? t.GetProperty("SelectedRecipe", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-                    if (selProp != null && selProp.CanRead)
-                    {
-                        try { wrapper = selProp.GetValue(gui); } catch { wrapper = null; }
-                    }
-                }
-
-                if (wrapper != null)
-                {
-                    var wt = wrapper.GetType();
-
-                    string[] wrapperMethods = new[] { "Refresh", "Update", "UpdateIfNeeded", "RefreshRequirements", "RefreshList", "OnChanged", "Setup" };
-                    foreach (var name in wrapperMethods)
-                    {
-                        try
-                        {
-                            var m = wt.GetMethod(name, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-                            if (m != null && m.GetParameters().Length == 0)
-                            {
-                                try { m.Invoke(wrapper, null); LogWarning($"[ChanceCraft] RefreshUpgradeTabInner: invoked wrapper.{name}()"); } catch { }
-                            }
-                        }
-                        catch { /* ignore per-method */ }
-                    }
-
-                    try
-                    {
-                        var rp = wt.GetProperty("Recipe", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-                        if (rp != null && rp.CanRead && rp.CanWrite)
-                        {
+                            int prevQ = expectedPreQuality;
+                            int prevV = found.m_variant;
                             try
                             {
-                                var val = rp.GetValue(wrapper);
-                                rp.SetValue(wrapper, null);
-                                rp.SetValue(wrapper, val);
-                                LogWarning("[ChanceCraft] RefreshUpgradeTabInner: toggled wrapper.Recipe to force UI rebind");
-                            }
-                            catch { /* best-effort */ }
-                        }
-                    }
-                    catch { /* ignore */ }
-                }
-
-                try
-                {
-                    var reqField = t.GetField("m_reqList", BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public)
-                                ?? t.GetField("m_requirements", BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
-                    if (reqField != null)
-                    {
-                        var reqObj = reqField.GetValue(gui);
-                        if (reqObj != null)
-                        {
-                            var rt = reqObj.GetType();
-                            foreach (var name in new[] { "Refresh", "Update", "UpdateIfNeeded", "OnChanged" })
-                            {
-                                try
+                                if (ChanceCraft._preCraftSnapshotData != null && ChanceCraft._preCraftSnapshotData.TryGetValue(upgradeTarget, out var tupleVal) && ChanceCraftRecipeHelpers.TryUnpackQualityVariant(tupleVal, out int pq, out int pv))
                                 {
-                                    var m = rt.GetMethod(name, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-                                    if (m != null && m.GetParameters().Length == 0)
+                                    prevQ = pq;
+                                    prevV = pv;
+                                }
+                                else
+                                {
+                                    int h = RuntimeHelpers.GetHashCode(found);
+                                    if (ChanceCraft._preCraftSnapshotHashQuality != null && ChanceCraft._preCraftSnapshotHashQuality.TryGetValue(h, out int prevHashQ))
                                     {
-                                        try { m.Invoke(reqObj, null); LogWarning($"[ChanceCraft] RefreshUpgradeTabInner: invoked reqObj.{name}()"); } catch { }
+                                        prevQ = prevHashQ;
+                                        var kv = ChanceCraft._preCraftSnapshotData?.FirstOrDefault(p => RuntimeHelpers.GetHashCode(p.Key) == h);
+                                        if (!kv.Equals(default(KeyValuePair<ItemDrop.ItemData, (int, int)>)) && ChanceCraftRecipeHelpers.TryUnpackQualityVariant(kv.Value, out int pq2, out int pv2))
+                                        {
+                                            prevV = pv2;
+                                        }
                                     }
                                 }
-                                catch { /* ignore per-method */ }
                             }
-                        }
-                    }
-                }
-                catch { /* ignore */ }
+                            catch { }
 
-                try
-                {
-                    gui.StartCoroutine(DelayedRefreshCraftingPanel(__instance, 1));
-                    LogWarning("[ChanceCraft] RefreshUpgradeTabInner: scheduled DelayedRefreshCraftingPanel(gui,1)");
-                }
-                catch (Exception ex)
-                {
-                    LogWarning($"[ChanceCraft] RefreshUpgradeTabInner: could not start coroutine: {ex}");
-                    try { RefreshCraftingPanel(__instance); } catch { }
-                }
-            }
-            catch (Exception ex)
-            {
-                LogWarning($"[ChanceCraft] RefreshUpgradeTabInner: unexpected exception: {ex}");
-            }
-        }
-
-        public static void ForceSimulateTabSwitchRefresh(object __instance)
-        {
-            var gui = ResolveInventoryGui(__instance);
-            if (gui == null) return;
-            try
-            {
-                gui.StartCoroutine(ForceSimulateTabSwitchRefreshCoroutine(__instance));
-            }
-            catch (Exception ex)
-            {
-                LogWarning($"[ChanceCraft] ForceSimulateTabSwitchRefresh: failed to start coroutine: {ex}");
-                try { RefreshUpgradeTabInner(__instance); } catch { }
-            }
-        }
-
-        private static IEnumerator ForceSimulateTabSwitchRefreshCoroutine(object __instance)
-        {
-            var gui = ResolveInventoryGui(__instance);
-            if (gui == null) yield break;
-
-            object TryGetMember(string name)
-            {
-                try
-                {
-                    var t = gui.GetType();
-                    var f = t.GetField(name, BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
-                    if (f != null) return f.GetValue(gui);
-                    var p = t.GetProperty(name, BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
-                    if (p != null && p.CanRead) return p.GetValue(gui);
-                }
-                catch { }
-                return null;
-            }
-
-            string[] tabCandidates = new[] { "m_tabUpgrade", "m_tabCraft", "m_tabCrafting", "m_tab", "m_crafting", "m_tabPanel", "m_tabs" };
-            GameObject upgradeTabGO = null;
-            foreach (var nm in tabCandidates)
-            {
-                try
-                {
-                    var val = TryGetMember(nm);
-                    if (val != null)
-                    {
-                        if (val is GameObject g) { upgradeTabGO = g; break; }
-                        if (val is Component c) { upgradeTabGO = c.gameObject; break; }
-                        if (val is System.Collections.IEnumerable en && !(val is string))
-                        {
-                            foreach (var e in en)
+                            if (found.m_quality > prevQ)
                             {
-                                if (e is GameObject ge) { upgradeTabGO = ge; break; }
-                                if (e is Component ce) { upgradeTabGO = ce.gameObject; break; }
+                                ChanceCraftPlugin.LogInfo($"ForceRevertAfterRemoval: reverting target item itemHash={RuntimeHelpers.GetHashCode(found):X} name={found.m_shared?.m_name} oldQ={found.m_quality} -> {prevQ}");
+                                found.m_quality = prevQ;
+                                try { found.m_variant = prevV; } catch { }
                             }
-                            if (upgradeTabGO != null) break;
+                            return;
+                        }
+                    }
+                    catch { /* fail to target revert -> continue to fallback */ }
+                }
+
+                try
+                {
+                    if (ChanceCraft._preCraftSnapshotHashQuality != null && ChanceCraft._preCraftSnapshotHashQuality.Count > 0)
+                    {
+                        foreach (var it in all)
+                        {
+                            if (it == null || it.m_shared == null) continue;
+                            int h = RuntimeHelpers.GetHashCode(it);
+                            if (ChanceCraft._preCraftSnapshotHashQuality.TryGetValue(h, out int prevQ))
+                            {
+                                if (it.m_quality > prevQ)
+                                {
+                                    ChanceCraftPlugin.LogInfo($"ForceRevertAfterRemoval: reverting by-hash item itemHash={h:X} name={it.m_shared.m_name} oldQ={it.m_quality} -> {prevQ}");
+                                    it.m_quality = prevQ;
+                                    var kv = ChanceCraft._preCraftSnapshotData?.FirstOrDefault(p => RuntimeHelpers.GetHashCode(p.Key) == h);
+                                    if (!kv.Equals(default(KeyValuePair<ItemDrop.ItemData, (int, int)>)) && ChanceCraftRecipeHelpers.TryUnpackQualityVariant(kv.Value, out int pqf, out int pvf))
+                                    {
+                                        try { it.m_variant = pvf; } catch { }
+                                    }
+                                    return;
+                                }
+                            }
+                        }
+                    }
+                }
+                catch { }
+
+                try
+                {
+                    foreach (var it in all)
+                    {
+                        if (it == null || it.m_shared == null) continue;
+                        if (!string.Equals(it.m_shared.m_name, resultName, StringComparison.OrdinalIgnoreCase)) continue;
+                        if (it.m_quality > expectedPreQuality)
+                        {
+                            ChanceCraftPlugin.LogInfo($"ForceRevertAfterRemoval: last-resort revert itemHash={RuntimeHelpers.GetHashCode(it):X} name={it.m_shared.m_name} oldQ={it.m_quality} -> {expectedPreQuality}");
+                            it.m_quality = expectedPreQuality;
+                            var kv = ChanceCraft._preCraftSnapshotData?.FirstOrDefault(p => RuntimeHelpers.GetHashCode(p.Key) == RuntimeHelpers.GetHashCode(it));
+                            if (!kv.Equals(default(KeyValuePair<ItemDrop.ItemData, (int, int)>)) && ChanceCraftRecipeHelpers.TryUnpackQualityVariant(kv.Value, out int pq3, out int pv3))
+                            {
+                                try { it.m_variant = pv3; } catch { }
+                            }
+                            return;
                         }
                     }
                 }
                 catch { }
             }
-
-            Button backButton = null;
-            Toggle backToggle = null;
-
-            try
-            {
-                var comp = gui as Component;
-                if (upgradeTabGO != null)
-                {
-                    backButton = upgradeTabGO.GetComponentInChildren<Button>(true);
-                    backToggle = upgradeTabGO.GetComponentInChildren<Toggle>(true);
-                }
-                else if (comp != null)
-                {
-                    var btns = comp.GetComponentsInChildren<Button>(true);
-                    var tgls = comp.GetComponentsInChildren<Toggle>(true);
-
-                    backButton = btns.FirstOrDefault(b => b.gameObject.name.IndexOf("craft", StringComparison.OrdinalIgnoreCase) >= 0
-                                                         || b.gameObject.name.IndexOf("upgrade", StringComparison.OrdinalIgnoreCase) >= 0
-                                                         || b.gameObject.name.IndexOf("tab", StringComparison.OrdinalIgnoreCase) >= 0)
-                              ?? btns.FirstOrDefault();
-                    backToggle = tgls.FirstOrDefault(t => t.gameObject.name.IndexOf("craft", StringComparison.OrdinalIgnoreCase) >= 0
-                                                         || t.gameObject.name.IndexOf("upgrade", StringComparison.OrdinalIgnoreCase) >= 0
-                                                         || t.gameObject.name.IndexOf("tab", StringComparison.OrdinalIgnoreCase) >= 0)
-                              ?? tgls.FirstOrDefault();
-                }
-            }
             catch { }
-
-            Button awayButton = null;
-            Toggle awayToggle = null;
-            try
-            {
-                var comp = gui as Component;
-                if (comp != null)
-                {
-                    var btnsAll = comp.GetComponentsInChildren<Button>(true);
-                    var tglsAll = comp.GetComponentsInChildren<Toggle>(true);
-
-                    awayButton = btnsAll.FirstOrDefault(b => b != backButton && !b.gameObject.name.Equals("Close", StringComparison.OrdinalIgnoreCase));
-                    awayToggle = tglsAll.FirstOrDefault(t => t != backToggle);
-                }
-            }
-            catch { }
-
-            if (backButton == null && backToggle == null)
-            {
-                try { RefreshUpgradeTabInner(__instance); } catch { }
-                yield break;
-            }
-
-            try
-            {
-                if (awayButton != null)
-                {
-                    try { awayButton.onClick?.Invoke(); LogWarning("[ChanceCraft] ForceSimulateTabSwitch: invoked awayButton.onClick"); } catch { }
-                }
-                else if (awayToggle != null)
-                {
-                    try { awayToggle.isOn = !awayToggle.isOn; LogWarning("[ChanceCraft] ForceSimulateTabSwitch: toggled awayToggle"); } catch { }
-                }
-                else
-                {
-                    try
-                    {
-                        var comp = gui as Component;
-                        var child = (comp?.transform?.childCount > 0) ? comp.transform.GetChild(0).gameObject : null;
-                        if (child != null) { child.SetActive(false); }
-                    }
-                    catch { }
-                }
-            }
-            catch (Exception ex)
-            {
-                LogWarning($"[ChanceCraft] ForceSimulateTabSwitch: away-click failed: {ex}");
-            }
-
-            yield return null;
-
-            try
-            {
-                if (backButton != null)
-                {
-                    try { backButton.onClick?.Invoke(); LogWarning("[ChanceCraft] ForceSimulateTabSwitch: invoked backButton.onClick"); } catch { }
-                }
-                else if (backToggle != null)
-                {
-                    try { backToggle.isOn = true; LogWarning("[ChanceCraft] ForceSimulateTabSwitch: set backToggle.isOn = true"); } catch { }
-                }
-            }
-            catch (Exception ex)
-            {
-                LogWarning($"[ChanceCraft] ForceSimulateTabSwitch: back-click failed: {ex}");
-            }
-
-            yield return null;
-            try { RefreshUpgradeTabInner(__instance); } catch { }
-            try { RefreshInventoryGui(__instance); } catch { }
-            try { RefreshCraftingPanel(__instance); } catch { }
-
-            yield break;
         }
-
-        public static IEnumerator DelayedRefreshCraftingPanel(object __instance, int delayFrames = 1)
-        {
-            var gui = ResolveInventoryGui(__instance);
-            if (gui == null) yield break;
-            for (int i = 0; i < Math.Max(1, delayFrames); i++) yield return null;
-            try { RefreshCraftingPanel(__instance); } catch { }
-        }
-        #endregion
     }
 }
-#endregion
