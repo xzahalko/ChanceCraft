@@ -1317,10 +1317,10 @@ namespace ChanceCraft
 
                             try
                             {
-                                ChanceCraftUIHelpers.ForceSimulateTabSwitchRefresh(__instance);
-                                try { ChanceCraftUIHelpers.RefreshInventoryGui(__instance); } catch { }
-                                try { ChanceCraftUIHelpers.RefreshCraftingPanel(__instance); } catch { }
-                                try { __instance?.StartCoroutine(ChanceCraftUIHelpers.DelayedRefreshCraftingPanel(__instance, 1)); } catch { }
+                                ChanceCraftUIHelpers.ForceSimulateTabSwitchRefresh(gui);
+                                try { ChanceCraftUIHelpers.RefreshInventoryGui(gui); } catch { }
+                                try { ChanceCraftUIHelpers.RefreshCraftingPanel(gui); } catch { }
+                                try { gui?.StartCoroutine(ChanceCraftUIHelpers.DelayedRefreshCraftingPanel(gui, 1)); } catch { }
                                 UnityEngine.Debug.LogWarning("[ChanceCraft] TrySpawnCraftEffect: performed UI refresh after revert attempts.");
                             }
                             catch (Exception exRefresh)
@@ -1333,7 +1333,7 @@ namespace ChanceCraft
 
                         try
                         {
-                            var target = _upgradeTargetItem ?? ChanceCraftRecipeHelpers.GetSelectedInventoryItem(__instance);
+                            var target = _upgradeTargetItem ?? ChanceCraftRecipeHelpers.GetSelectedInventoryItem(gui);
                             var targetHash = target != null ? RuntimeHelpers.GetHashCode(target).ToString("X") : "null";
                             var inv = Player.m_localPlayer?.GetInventory();
                             int woodBefore = 0, scrapBefore = 0, hideBefore = 0;
@@ -1348,17 +1348,17 @@ namespace ChanceCraft
                         }
                         catch { }
 
-                        var recipeToUse = _upgradeGuiRecipe ?? _upgradeRecipe ?? ChanceCraftRecipeHelpers.GetUpgradeRecipeFromGui(__instance) ?? selectedRecipe;
+                        var recipeToUse = _upgradeGuiRecipe ?? _upgradeRecipe ?? ChanceCraftRecipeHelpers.GetUpgradeRecipeFromGui(gui) ?? selectedRecipe;
                         if (ReferenceEquals(recipeToUse, selectedRecipe))
                         {
                             var candidate = ChanceCraftRecipeHelpers.FindBestUpgradeRecipeCandidate(selectedRecipe);
                             if (candidate != null) recipeToUse = candidate;
                         }
 
-                        var upgradeTarget = _upgradeTargetItem ?? ChanceCraftRecipeHelpers.GetSelectedInventoryItem(__instance);
-                        ChanceCraftResourceHelpers.RemoveRequiredResourcesUpgrade(__instance, Player.m_localPlayer, recipeToUse, upgradeTarget, false);
+                        var upgradeTarget = _upgradeTargetItem ?? ChanceCraftRecipeHelpers.GetSelectedInventoryItem(gui);
+                        ChanceCraftResourceHelpers.RemoveRequiredResourcesUpgrade(gui, Player.m_localPlayer, recipeToUse, upgradeTarget, false);
 
-                        try { ChanceCraftUIHelpers.ForceRevertAfterRemoval(__instance, recipeToUse, upgradeTarget); } catch { }
+                        try { ChanceCraftUIHelpers.ForceRevertAfterRemoval(gui, recipeToUse, upgradeTarget); } catch { }
 
                         lock (typeof(ChanceCraft))
                         {
@@ -1419,7 +1419,7 @@ namespace ChanceCraft
                     }
                     catch { }
 
-                    try { ChanceCraftResourceHelpers.RemoveRequiredResources(__instance, Player.m_localPlayer, selectedRecipe, false, false); } catch { }
+                    try { ChanceCraftResourceHelpers.RemoveRequiredResources(gui, Player.m_localPlayer, selectedRecipe, false, false); } catch { }
                     try { Player.m_localPlayer?.Message(MessageHud.MessageType.Center, "<color=red>Crafting failed!</color>"); } catch { }
 
                     ClearCapturedUpgradeGui();
