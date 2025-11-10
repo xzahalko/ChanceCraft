@@ -65,7 +65,7 @@ namespace ChanceCraft
         internal static int _upgradeTargetItemIndex = -1;
         internal static List<(string name, int amount)> _upgradeGuiRequirements;
 
-        internal static bool VERBOSE_DEBUG = true; // set false when done
+        internal static bool VERBOSE_DEBUG = false; // set false when done
 
         internal static readonly object _savedResourcesLock = new object();
 
@@ -1524,6 +1524,56 @@ namespace ChanceCraft
                         }
                         else
                         {
+                            // Determine canonical crafted/result prefab name(s) to avoid matching the crafted item itself
+                            string craftedNameRaw = null;
+                            string craftedPrefabCandidate = null;
+                            try
+                            {
+                                craftedNameRaw = selectedRecipe.m_item?.m_itemData?.m_shared?.m_name;
+                                if (!string.IsNullOrWhiteSpace(craftedNameRaw)) craftedPrefabCandidate = craftedNameRaw;
+                            }
+                            catch { craftedNameRaw = null; craftedPrefabCandidate = null; }
+
+                            // Also try to obtain prefab name from result's dropPrefab if present
+                            try
+                            {
+                                var dropPrefab = selectedRecipe.m_item?.m_itemData?.m_dropPrefab;
+                                if (dropPrefab != null)
+                                {
+                                    var n = dropPrefab.name?.Replace("(Clone)", "");
+                                    if (!string.IsNullOrWhiteSpace(n)) craftedPrefabCandidate = craftedPrefabCandidate ?? n;
+                                }
+                            }
+                            catch { }
+
+                            // Normalize helper: strips leading $ and item_ and punctuation to make comparisons robust
+                            Func<string, string> normalize = (s) =>
+                            {
+                                if (string.IsNullOrEmpty(s)) return s;
+                                var t = s.Trim();
+                                if (t.StartsWith("$")) t = t.Substring(1);
+                                if (t.StartsWith("item_", StringComparison.OrdinalIgnoreCase)) t = t.Substring(5);
+                                t = t.Replace("(Clone)", "");
+                                t = t.Replace("_", "").Replace("-", "").Replace(" ", "").ToLowerInvariant();
+                                return t;
+                            };
+
+                            var craftedNormalized = normalize(craftedPrefabCandidate);
+
+                            // Capture pre-craft snapshot (if any) for deciding which same-prefab entries are pre-existing.
+                            List<ItemDrop.ItemData> preSnapshotCopy = null;
+                            try
+                            {
+                                lock (typeof(ChanceCraft))
+                                {
+                                    if (ChanceCraft._preCraftSnapshot != null)
+                                    {
+                                        preSnapshotCopy = new List<ItemDrop.ItemData>(ChanceCraft._preCraftSnapshot);
+                                    }
+                                }
+                            }
+                            catch { preSnapshotCopy = null; }
+
                             // helper: best-effort extract prefab name from inventory object
                             Func<object, string> extractPrefabName = (obj) =>
                             {
@@ -1703,18 +1753,58 @@ namespace ChanceCraft
 
                                     object matchedItemObj = null;
                                     int checkedCount = 0;
+                                    var normalizedWanted = normalize(line.ItemPrefab);
+
                                     foreach (var invObj in invItems)
                                     {
                                         checkedCount++;
                                         if (invObj == null) continue;
                                         var invPrefabName = extractPrefabName(invObj);
                                         if (string.IsNullOrWhiteSpace(invPrefabName)) continue;
+
+                                        var invPrefabNormalized = normalize(invPrefabName);
+
+                                        // If normalized matches craftedNormalized, only allow consumption when this inventory entry
+                                        // was present in the pre-craft snapshot. This prevents consuming the crafted result while
+                                        // still allowing pre-existing same-prefab items to be consumed.
+                                        if (!string.IsNullOrEmpty(craftedNormalized) && !string.IsNullOrEmpty(invPrefabNormalized) && invPrefabNormalized == craftedNormalized)
+                                        {
+                                            bool isPreExisting = false;
+                                            if (preSnapshotCopy != null)
+                                            {
+                                                foreach (var pre in preSnapshotCopy)
+                                                {
+                                                    if (object.ReferenceEquals(pre, invObj))
+                                                    {
+                                                        isPreExisting = true;
+                                                        break;
+                                                    }
+                                                }
+                                            }
+
+                                            if (!isPreExisting)
+                                            {
+                                                // No snapshot entry found for this inventory object -> treat as potential crafted item (skip)
+                                                LogDebugIf(VERBOSE_DEBUG, $"Skipping inventory prefab '{invPrefabName}' because it appears to be the crafted result (no pre-craft snapshot entry).");
+                                                continue;
+                                            }
+                                        }
+
+                                        // Match using normalized comparison so config formats like "$item_bow" / "Bow" / "item_bow" work
+                                        if (!string.IsNullOrEmpty(normalizedWanted) && invPrefabNormalized == normalizedWanted)
+                                        {
+                                            matchedItemObj = invObj;
+                                            break;
+                                        }
+
+                                        // also keep a fallback exact-name match for backward compatibility
                                         if (invPrefabName == line.ItemPrefab)
                                         {
                                             matchedItemObj = invObj;
                                             break;
                                         }
                                     }
+
                                     LogDebugIf(VERBOSE_DEBUG, $"Checked {checkedCount} inventory entries for prefab '{line.ItemPrefab}'.");
 
                                     if (matchedItemObj != null)
