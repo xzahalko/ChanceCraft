@@ -1392,13 +1392,6 @@ namespace ChanceCraft
 
         #region TrySpawnCraftEffect and related logic (uses helpers)
 
-        // TrySpawnCraftEffect - final tweak: avoid consuming the freshly crafted item while still allowing
-        // consumption of pre-existing inventory items that share the same prefab/display name.
-        // Approach:
-        // - Determine recipe result prefab/displayName (best-effort).
-        // - When scanning inventory for helper items, if an entry matches the recipe result prefab/displayName,
-        //   allow consuming it only if that inventory entry was present before crafting started (contained in _preCraftSnapshot).
-        //   Otherwise treat it as the freshly created result and skip it.
         public static Recipe TrySpawnCraftEffect(InventoryGui gui, Recipe forcedRecipe = null, bool isUpgradeCall = false)
         {
             Recipe selectedRecipe = forcedRecipe;
@@ -1436,7 +1429,7 @@ namespace ChanceCraft
                 itemType = null;
             }
 
-            // Types that this plugin affects (apply success/failure chance to these types)
+            // This boolean names the types that the plugin should affect (we apply failure chance to these types).
             bool isEligibleType =
                 itemType == ItemDrop.ItemData.ItemType.OneHandedWeapon ||
                 itemType == ItemDrop.ItemData.ItemType.TwoHandedWeapon ||
@@ -1462,71 +1455,6 @@ namespace ChanceCraft
             bool foundAnyConfiguredMatch = false;
 
             var plugin = BepInEx.Bootstrap.Chainloader.ManagerObject.GetComponent<ChanceCraft>();
-
-            // Determine recipe result identifiers so we can avoid consuming the freshly crafted item as a helper.
-            string recipeResultPrefab = null;
-            string recipeResultDisplayName = null;
-            try
-            {
-                var shared = selectedRecipe.m_item?.m_itemData?.m_shared;
-                if (shared != null)
-                {
-                    var dropPrefabField = shared.GetType().GetField("m_dropPrefab", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-                    if (dropPrefabField != null)
-                    {
-                        var go = dropPrefabField.GetValue(shared) as GameObject;
-                        if (go != null) recipeResultPrefab = go.name.Replace("(Clone)", "");
-                    }
-                    else
-                    {
-                        var dropPrefabProp = shared.GetType().GetProperty("m_dropPrefab", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-                        if (dropPrefabProp != null)
-                        {
-                            var go = dropPrefabProp.GetValue(shared) as GameObject;
-                            if (go != null) recipeResultPrefab = go.name.Replace("(Clone)", "");
-                        }
-                    }
-
-                    var nameField = shared.GetType().GetField("m_name", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-                    if (nameField != null)
-                        recipeResultDisplayName = nameField.GetValue(shared) as string;
-                    else
-                    {
-                        var nameProp = shared.GetType().GetProperty("m_name", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-                        if (nameProp != null) recipeResultDisplayName = nameProp.GetValue(shared) as string;
-                    }
-                }
-
-                if (string.IsNullOrWhiteSpace(recipeResultPrefab))
-                {
-                    try
-                    {
-                        var itemDataObj = selectedRecipe.m_item?.m_itemData;
-                        if (itemDataObj != null)
-                        {
-                            var pfField = itemDataObj.GetType().GetField("m_dropPrefab", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-                            if (pfField != null)
-                            {
-                                var go = pfField.GetValue(itemDataObj) as GameObject;
-                                if (go != null) recipeResultPrefab = go.name.Replace("(Clone)", "");
-                            }
-                            else
-                            {
-                                var pfProp = itemDataObj.GetType().GetProperty("m_dropPrefab", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-                                if (pfProp != null)
-                                {
-                                    var go = pfProp.GetValue(itemDataObj) as GameObject;
-                                    if (go != null) recipeResultPrefab = go.name.Replace("(Clone)", "");
-                                }
-                            }
-                        }
-                    }
-                    catch { }
-                }
-            }
-            catch { /* best-effort only */ }
-
-            LogDebugIf(VERBOSE_DEBUG, $"Recipe result prefab='{recipeResultPrefab ?? "<null>"}' displayName='{recipeResultDisplayName ?? "<null>"}'");
 
             // For eligible types, check player's inventory for configured helper prefabs and consume them (best-effort).
             if (plugin == null)
@@ -1596,92 +1524,70 @@ namespace ChanceCraft
                         }
                         else
                         {
-                            // helper: best-effort extract prefab name from inventory object and also shared display name
-                            Func<object, (string prefabName, string displayName)> extractNames = (obj) =>
+                            // helper: best-effort extract prefab name from inventory object
+                            Func<object, string> extractPrefabName = (obj) =>
                             {
-                                if (obj == null) return (null, null);
+                                if (obj == null) return null;
                                 try
                                 {
                                     var t = obj.GetType();
-                                    string prefab = null;
-                                    string disp = null;
-
                                     var sharedField = t.GetField("m_shared", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
                                     object shared = sharedField != null ? sharedField.GetValue(obj) : null;
                                     if (shared != null)
                                     {
-                                        var nameField = shared.GetType().GetField("m_name", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-                                        if (nameField != null) disp = nameField.GetValue(shared) as string;
-                                        else
-                                        {
-                                            var nameProp = shared.GetType().GetProperty("m_name", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-                                            if (nameProp != null) disp = nameProp.GetValue(shared) as string;
-                                        }
-
-                                        var pfField = shared.GetType().GetField("m_dropPrefab", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                                        var sharedType = shared.GetType();
+                                        var pfField = sharedType.GetField("m_dropPrefab", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
                                         if (pfField != null)
                                         {
-                                            var go = pfField.GetValue(shared) as GameObject;
-                                            if (go != null) prefab = go.name.Replace("(Clone)", "");
+                                            var pf = pfField.GetValue(shared) as GameObject;
+                                            if (pf != null) return pf.name.Replace("(Clone)", "");
                                         }
-                                        else
+                                        var pfProp = sharedType.GetProperty("m_dropPrefab", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                                        if (pfProp != null)
                                         {
-                                            var pfProp = shared.GetType().GetProperty("m_dropPrefab", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-                                            if (pfProp != null)
-                                            {
-                                                var go = pfProp.GetValue(shared) as GameObject;
-                                                if (go != null) prefab = go.name.Replace("(Clone)", "");
-                                            }
+                                            var pf = pfProp.GetValue(shared) as GameObject;
+                                            if (pf != null) return pf.name.Replace("(Clone)", "");
                                         }
                                     }
 
-                                    if (prefab == null)
+                                    var pfField2 = t.GetField("m_dropPrefab", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                                    if (pfField2 != null)
                                     {
-                                        var pfField2 = t.GetField("m_dropPrefab", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-                                        if (pfField2 != null)
-                                        {
-                                            var go = pfField2.GetValue(obj) as GameObject;
-                                            if (go != null) prefab = go.name.Replace("(Clone)", "");
-                                        }
-                                        else
-                                        {
-                                            var pfProp2 = t.GetProperty("m_dropPrefab", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-                                            if (pfProp2 != null)
-                                            {
-                                                var go = pfProp2.GetValue(obj) as GameObject;
-                                                if (go != null) prefab = go.name.Replace("(Clone)", "");
-                                            }
-                                        }
+                                        var pf = pfField2.GetValue(obj) as GameObject;
+                                        if (pf != null) return pf.name.Replace("(Clone)", "");
                                     }
-
-                                    if (prefab == null)
+                                    var pfProp2 = t.GetProperty("m_dropPrefab", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                                    if (pfProp2 != null)
                                     {
-                                        var goProp = t.GetProperty("gameObject", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-                                        if (goProp != null)
-                                        {
-                                            var go = goProp.GetValue(obj) as GameObject;
-                                            if (go != null) prefab = go.name.Replace("(Clone)", "");
-                                        }
+                                        var pf = pfProp2.GetValue(obj) as GameObject;
+                                        if (pf != null) return pf.name.Replace("(Clone)", "");
                                     }
 
-                                    if (disp == null)
+                                    var goProp = t.GetProperty("gameObject", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                                    if (goProp != null)
                                     {
-                                        var nameField2 = t.GetField("name", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-                                        if (nameField2 != null) disp = nameField2.GetValue(obj) as string;
-                                        else
-                                        {
-                                            var nameProp2 = t.GetProperty("name", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-                                            if (nameProp2 != null) disp = nameProp2.GetValue(obj) as string;
-                                        }
+                                        var go = goProp.GetValue(obj) as GameObject;
+                                        if (go != null) return go.name.Replace("(Clone)", "");
                                     }
 
-                                    return (prefab, disp);
+                                    var nameField = t.GetField("name", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                                    if (nameField != null)
+                                    {
+                                        var n = nameField.GetValue(obj) as string;
+                                        if (!string.IsNullOrWhiteSpace(n)) return n.Replace("(Clone)", "");
+                                    }
+                                    var nameProp = t.GetProperty("name", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                                    if (nameProp != null)
+                                    {
+                                        var n = nameProp.GetValue(obj) as string;
+                                        if (!string.IsNullOrWhiteSpace(n)) return n.Replace("(Clone)", "");
+                                    }
                                 }
                                 catch (Exception ex)
                                 {
-                                    LogDebugIf(VERBOSE_DEBUG, "extractNames exception: " + ex);
-                                    return (null, null);
+                                    LogDebugIf(VERBOSE_DEBUG, "extractPrefabName exception: " + ex);
                                 }
+                                return null;
                             };
 
                             // helper to remove one instance (best-effort) from the player's inventory
@@ -1705,13 +1611,13 @@ namespace ChanceCraft
                                     }
 
                                     // 2) Inventory.RemoveItem(string, int)
-                                    var sharedField2 = itemTypeInv.GetField("m_shared", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                                    var sharedField = itemTypeInv.GetField("m_shared", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
                                     string displayName = null;
-                                    if (sharedField2 != null)
+                                    if (sharedField != null)
                                     {
                                         try
                                         {
-                                            var shared = sharedField2.GetValue(invItemObj);
+                                            var shared = sharedField.GetValue(invItemObj);
                                             if (shared != null)
                                             {
                                                 var nameField = shared.GetType().GetField("m_name", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
@@ -1801,72 +1707,27 @@ namespace ChanceCraft
                                     {
                                         checkedCount++;
                                         if (invObj == null) continue;
-
-                                        var (invPrefabName, invDisplayName) = extractNames(invObj);
-                                        if (string.IsNullOrWhiteSpace(invPrefabName) && string.IsNullOrWhiteSpace(invDisplayName)) continue;
-
-                                        bool matchesRecipeResult = false;
-                                        if (!string.IsNullOrWhiteSpace(recipeResultPrefab) && !string.IsNullOrWhiteSpace(invPrefabName) &&
-                                            string.Equals(invPrefabName, recipeResultPrefab, StringComparison.OrdinalIgnoreCase))
-                                        {
-                                            matchesRecipeResult = true;
-                                        }
-                                        if (!string.IsNullOrWhiteSpace(recipeResultDisplayName) && !string.IsNullOrWhiteSpace(invDisplayName) &&
-                                            string.Equals(invDisplayName, recipeResultDisplayName, StringComparison.OrdinalIgnoreCase))
-                                        {
-                                            matchesRecipeResult = true;
-                                        }
-
-                                        // If this inventory entry matches the recipe result, only skip it if it was NOT present BEFORE crafting started.
-                                        // If it WAS present before the craft (_preCraftSnapshot), it is a pre-existing item and may be used as a helper.
-                                        if (matchesRecipeResult)
-                                        {
-                                            try
-                                            {
-                                                if (_preCraftSnapshot != null && _preCraftSnapshot.Contains(invObj))
-                                                {
-                                                    // allowed: it was present before craft -> treat as normal inventory item
-                                                }
-                                                else
-                                                {
-                                                    // treat entry as freshly created result (or unknown state) -> skip it
-                                                    continue;
-                                                }
-                                            }
-                                            catch (Exception ex)
-                                            {
-                                                LogDebugIf(VERBOSE_DEBUG, "pre-snapshot membership check failed: " + ex);
-                                                // be conservative: skip the entry to avoid consuming the freshly created result in ambiguous situations
-                                                continue;
-                                            }
-                                        }
-
-                                        if (!string.IsNullOrWhiteSpace(invPrefabName) && invPrefabName == line.ItemPrefab)
-                                        {
-                                            matchedItemObj = invObj;
-                                            break;
-                                        }
-
-                                        // some config lines may specify display names instead of prefab names; allow fallback
-                                        if (!string.IsNullOrWhiteSpace(invDisplayName) && string.Equals(invDisplayName, line.ItemPrefab, StringComparison.OrdinalIgnoreCase))
+                                        var invPrefabName = extractPrefabName(invObj);
+                                        if (string.IsNullOrWhiteSpace(invPrefabName)) continue;
+                                        if (invPrefabName == line.ItemPrefab)
                                         {
                                             matchedItemObj = invObj;
                                             break;
                                         }
                                     }
-                                    LogDebugIf(VERBOSE_DEBUG, $"Checked {checkedCount} inventory entries for prefab/display '{line.ItemPrefab}'.");
+                                    LogDebugIf(VERBOSE_DEBUG, $"Checked {checkedCount} inventory entries for prefab '{line.ItemPrefab}'.");
 
                                     if (matchedItemObj != null)
                                     {
                                         totalModifiedPercentage += line.IncreaseCraftPercentage;
                                         foundAnyConfiguredMatch = true;
-                                        LogDebugIf(VERBOSE_DEBUG, $"Matched inventory prefab/display '{line.ItemPrefab}'. Increase +{line.IncreaseCraftPercentage}. Attempting to remove one instance.");
+                                        LogDebugIf(VERBOSE_DEBUG, $"Matched inventory prefab '{line.ItemPrefab}'. Increase +{line.IncreaseCraftPercentage}. Attempting to remove one instance.");
                                         removeOne(matchedItemObj);
                                         LogDebugIf(VERBOSE_DEBUG, $"Attempted removal for '{line.ItemPrefab}'.");
                                     }
                                     else
                                     {
-                                        LogDebugIf(VERBOSE_DEBUG, $"No inventory match found for prefab/display '{line.ItemPrefab}'.");
+                                        LogDebugIf(VERBOSE_DEBUG, $"No inventory match found for prefab '{line.ItemPrefab}'.");
                                     }
                                 }
                             }
@@ -1884,22 +1745,6 @@ namespace ChanceCraft
                 }
             }
             catch (Exception ex) { LogDebugIf(VERBOSE_DEBUG, "Final logging failed: " + ex); }
-
-            if (foundAnyConfiguredMatch)
-            {
-                float percent = totalModifiedPercentage * 100f;
-                string text = $"<color=yellow>Crafting percentage increased by {percent:0.##}%</color>";
-                LogInfo("Displaying HUD message to player: " + text);
-
-                if (MessageHud.instance != null)
-                {
-                    MessageHud.instance.ShowMessage(MessageHud.MessageType.Center, text);
-                }
-                else if (Player.m_localPlayer != null)
-                {
-                    Player.m_localPlayer.Message(MessageHud.MessageType.Center, text);
-                }
-            }
 
             var player = Player.m_localPlayer;
 
@@ -2094,7 +1939,7 @@ namespace ChanceCraft
                     
                     if (foundAnyConfiguredMatch)
                     {
-                        float percent = totalModifiedPercentage * 100f;
+                        float percent = totalModifiedPercentage * 100f;                        
                         String text = $"<color=yellow>Percentage increased by {percent:0.##}%</color>";
                         LogInfo("Displaying HUD message to player: " + text);
 
@@ -2107,7 +1952,6 @@ namespace ChanceCraft
                             Player.m_localPlayer.Message(MessageHud.MessageType.Center, text);
                         }
                     }
-
                     return null;
                 }
             }
@@ -2389,8 +2233,6 @@ namespace ChanceCraft
                     catch { }
 
                     try { ChanceCraftResourceHelpers.RemoveRequiredResources(gui, Player.m_localPlayer, selectedRecipe, false, false); } catch { }
-                    
-                    try { ChanceCraftResourceHelpers.RemoveRequiredResources(gui, Player.m_localPlayer, selectedRecipe, false, false); } catch { }
                     string text = "<color=red>Crafting failed!</color>";
 
                     if (foundAnyConfiguredMatch)
@@ -2398,7 +2240,7 @@ namespace ChanceCraft
                         float percent = totalModifiedPercentage * 100f;
                         text = $"<color=red>Crafting failed even percentage increased by {percent:0.##}%</color>";
                         LogInfo("Displaying HUD message to player: " + text);
-                    }
+                    } 
 
                     if (MessageHud.instance != null)
                     {
