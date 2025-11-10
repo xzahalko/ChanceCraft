@@ -31,7 +31,7 @@ namespace ChanceCraft
     {
         public const string pluginID = "deep.ChanceCraft";
         public const string pluginName = "Chance Craft";
-        public const string pluginVersion = "1.1.3";
+        public const string pluginVersion = "1.1.4";
 
         private Harmony _harmony;
 
