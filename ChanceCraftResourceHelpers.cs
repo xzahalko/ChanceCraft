@@ -90,7 +90,7 @@ namespace ChanceCraft
             try
             {
                 var targetHash = upgradeTargetItem != null ? RuntimeHelpers.GetHashCode(upgradeTargetItem).ToString("X") : "null";
-                ChanceCraftPlugin.LogInfo($"RemoveAmountFromInventorySkippingTarget: requested={amount} removed={removedTotal} resource={resourceName} targetHash={targetHash}");
+                ChanceCraft.LogInfo($"RemoveAmountFromInventorySkippingTarget: requested={amount} removed={removedTotal} resource={resourceName} targetHash={targetHash}");
             }
             catch { }
 
@@ -144,11 +144,11 @@ namespace ChanceCraft
                     }
                 }
 
-                ChanceCraftPlugin.LogInfo($"RemoveAmountFromInventoryLocal: requested={amount} name={resName} removed={amount - toRemove}");
+                ChanceCraft.LogInfo($"RemoveAmountFromInventoryLocal: requested={amount} name={resName} removed={amount - toRemove}");
             }
             catch (Exception ex)
             {
-                ChanceCraftPlugin.LogWarning($"RemoveAmountFromInventoryLocal exception: {ex}");
+                ChanceCraft.LogWarning($"RemoveAmountFromInventoryLocal exception: {ex}");
             }
         }
 
@@ -174,14 +174,14 @@ namespace ChanceCraft
 
                 if (!string.IsNullOrEmpty(removalKey))
                 {
-                    lock (ChanceCraftPlugin._recentRemovalKeysLock)
+                    lock (ChanceCraft._recentRemovalKeysLock)
                     {
-                        if (ChanceCraftPlugin._recentRemovalKeys.Contains(removalKey))
+                        if (ChanceCraft._recentRemovalKeys.Contains(removalKey))
                         {
-                            ChanceCraftPlugin.LogInfo($"RemoveRequiredResources: skipping duplicate removal for {removalKey}");
+                            ChanceCraft.LogInfo($"RemoveRequiredResources: skipping duplicate removal for {removalKey}");
                             return;
                         }
-                        ChanceCraftPlugin._recentRemovalKeys.Add(removalKey);
+                        ChanceCraft._recentRemovalKeys.Add(removalKey);
                         removalKeyAdded = true;
                     }
 
@@ -190,7 +190,7 @@ namespace ChanceCraft
                         var st = new System.Diagnostics.StackTrace(1, false);
                         var frame = st.GetFrame(0);
                         var caller = frame != null ? $"{frame.GetMethod()?.DeclaringType?.Name}.{frame.GetMethod()?.Name}" : "unknown";
-                        ChanceCraftPlugin.LogInfo($"RemoveRequiredResources CALLER: removalKey={removalKey} caller={caller}");
+                        ChanceCraft.LogInfo($"RemoveRequiredResources CALLER: removalKey={removalKey} caller={caller}");
                     }
                     catch { }
                 }
@@ -348,7 +348,7 @@ namespace ChanceCraft
                         }
                         catch (Exception ex)
                         {
-                            ChanceCraftPlugin.LogWarning($"RemoveRequiredResources removal exception: {ex}");
+                            ChanceCraft.LogWarning($"RemoveRequiredResources removal exception: {ex}");
                         }
                     }
                     return;
@@ -367,7 +367,7 @@ namespace ChanceCraft
                     }
                     catch (Exception ex)
                     {
-                        ChanceCraftPlugin.LogWarning($"RemoveRequiredResources removal exception: {ex}");
+                        ChanceCraft.LogWarning($"RemoveRequiredResources removal exception: {ex}");
                     }
                 }
             }
@@ -377,9 +377,9 @@ namespace ChanceCraft
                 {
                     if (removalKeyAdded && !string.IsNullOrEmpty(removalKey))
                     {
-                        lock (ChanceCraftPlugin._recentRemovalKeysLock)
+                        lock (ChanceCraft._recentRemovalKeysLock)
                         {
-                            ChanceCraftPlugin._recentRemovalKeys.Remove(removalKey);
+                            ChanceCraft._recentRemovalKeys.Remove(removalKey);
                         }
                     }
                 }
@@ -540,14 +540,14 @@ namespace ChanceCraft
                         {
                             removed = RemoveAmountSkippingTargetLocal(req.name, amountToRemove);
                         }
-                        catch (Exception ex) { ChanceCraftPlugin.LogWarning($"RemoveRequiredResourcesUpgrade removal exception: {ex}"); }
+                        catch (Exception ex) { ChanceCraft.LogWarning($"RemoveRequiredResourcesUpgrade removal exception: {ex}"); }
                     }
                     return;
                 }
             }
             catch (Exception ex)
             {
-                ChanceCraftPlugin.LogWarning($"RemoveRequiredResourcesUpgrade exception: {ex}");
+                ChanceCraft.LogWarning($"RemoveRequiredResourcesUpgrade exception: {ex}");
             }
         }
     }

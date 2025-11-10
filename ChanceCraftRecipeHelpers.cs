@@ -217,7 +217,7 @@ namespace ChanceCraft
                         {
                             foundRecipe = r;
                             foundPath = path;
-                            ChanceCraftPlugin.LogWarning($"TryExtractRecipeFromWrapper: found Recipe at path '{path}': {RecipeInfo(r)}");
+                            ChanceCraft.LogWarning($"TryExtractRecipeFromWrapper: found Recipe at path '{path}': {RecipeInfo(r)}");
                             return true;
                         }
                     }
@@ -240,7 +240,7 @@ namespace ChanceCraft
                                 {
                                     foundRecipe = maybe;
                                     foundPath = $"{path}.{f.Name}";
-                                    ChanceCraftPlugin.LogWarning($"TryExtractRecipeFromWrapper: found Recipe field '{f.Name}' at path '{foundPath}' => {RecipeInfo(foundRecipe)}");
+                                    ChanceCraft.LogWarning($"TryExtractRecipeFromWrapper: found Recipe field '{f.Name}' at path '{foundPath}' => {RecipeInfo(foundRecipe)}");
                                     return true;
                                 }
                             }
@@ -255,7 +255,7 @@ namespace ChanceCraft
                                     {
                                         foundRecipe = rr;
                                         foundPath = $"{path}.{f.Name}[{idx}]";
-                                        ChanceCraftPlugin.LogWarning($"TryExtractRecipeFromWrapper: found Recipe in enumerable '{f.Name}' at '{foundPath}' => {RecipeInfo(foundRecipe)}");
+                                        ChanceCraft.LogWarning($"TryExtractRecipeFromWrapper: found Recipe in enumerable '{f.Name}' at '{foundPath}' => {RecipeInfo(foundRecipe)}");
                                         return true;
                                     }
                                     q.Enqueue(new WrapperQueueNode(elem, $"{path}.{f.Name}[{idx}]", depth + 1));
@@ -286,7 +286,7 @@ namespace ChanceCraft
                                 {
                                     foundRecipe = maybe;
                                     foundPath = $"{path}.{p.Name}";
-                                    ChanceCraftPlugin.LogWarning($"TryExtractRecipeFromWrapper: found Recipe property '{p.Name}' at path '{foundPath}' => {RecipeInfo(foundRecipe)}");
+                                    ChanceCraft.LogWarning($"TryExtractRecipeFromWrapper: found Recipe property '{p.Name}' at path '{foundPath}' => {RecipeInfo(foundRecipe)}");
                                     return true;
                                 }
                             }
@@ -301,7 +301,7 @@ namespace ChanceCraft
                                     {
                                         foundRecipe = rr;
                                         foundPath = $"{path}.{p.Name}[{idx}]";
-                                        ChanceCraftPlugin.LogWarning($"TryExtractRecipeFromWrapper: found Recipe in enumerable property '{p.Name}' at '{foundPath}' => {RecipeInfo(foundRecipe)}");
+                                        ChanceCraft.LogWarning($"TryExtractRecipeFromWrapper: found Recipe in enumerable property '{p.Name}' at '{foundPath}' => {RecipeInfo(foundRecipe)}");
                                         return true;
                                     }
                                     q.Enqueue(new WrapperQueueNode(elem, $"{path}.{p.Name}[{idx}]", depth + 1));
@@ -319,7 +319,7 @@ namespace ChanceCraft
             }
             catch (Exception ex)
             {
-                ChanceCraftPlugin.LogWarning($"TryExtractRecipeFromWrapper exception: {ex}");
+                ChanceCraft.LogWarning($"TryExtractRecipeFromWrapper exception: {ex}");
             }
             return false;
         }
@@ -396,7 +396,7 @@ namespace ChanceCraft
             }
             catch (Exception ex)
             {
-                ChanceCraftPlugin.LogWarning($"GetUpgradeRecipeFromGui exception: {ex}");
+                ChanceCraft.LogWarning($"GetUpgradeRecipeFromGui exception: {ex}");
             }
             return null;
         }
@@ -582,7 +582,7 @@ namespace ChanceCraft
             }
             catch (Exception ex)
             {
-                ChanceCraftPlugin.LogWarning($"FindBestUpgradeRecipeCandidate exception: {ex}");
+                ChanceCraft.LogWarning($"FindBestUpgradeRecipeCandidate exception: {ex}");
                 return null;
             }
         }

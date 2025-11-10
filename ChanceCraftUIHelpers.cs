@@ -12,6 +12,54 @@ namespace ChanceCraft
     // UI refresh / requirement parsing / revert helpers extracted from ChanceCraft.cs
     public static class ChanceCraftUIHelpers
     {
+        // add this inside the ChanceCraftUIHelpers class
+        public static Recipe GetUpgradeRecipeFromGui(InventoryGui gui)
+        {
+            if (gui == null) return null;
+
+            try
+            {
+                // Common pattern: CraftingGui stores the currently selected recipe/item
+                // Replace the field/property names below with the actual ones from CraftingGui in your project.
+                // Example placeholders:
+                // - gui.m_currentRecipe
+                // - gui.m_selectedRecipe
+                // - gui.GetSelectedRecipe() (method)
+
+                // TODO: replace the following lookup with the real CraftingGui member
+                // Example (replace with the actual member):
+                // return gui.m_selectedRecipe;
+
+                // Fallback attempt: try to reflect common field names (non-performant, but robust for quick fix)
+                var type = gui.GetType();
+                var field = type.GetField("m_selectedRecipe", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public)
+                            ?? type.GetField("m_currentRecipe", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public);
+                if (field != null)
+                {
+                    return field.GetValue(gui) as Recipe;
+                }
+
+                // If there is a property or method, try them
+                var prop = type.GetProperty("SelectedRecipe", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic);
+                if (prop != null)
+                {
+                    return prop.GetValue(gui) as Recipe;
+                }
+
+                var method = type.GetMethod("GetSelectedRecipe", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic);
+                if (method != null)
+                {
+                    return method.Invoke(gui, null) as Recipe;
+                }
+            }
+            catch (Exception ex)
+            {
+                UnityEngine.Debug.LogException(ex);
+            }
+
+            return null;
+        }
+
         public static void RefreshCraftingPanel(InventoryGui gui)
         {
             if (gui == null) return;
@@ -78,9 +126,9 @@ namespace ChanceCraft
         {
             try
             {
-                if (gui == null) { ChanceCraftPlugin.LogInfo("DumpInventoryGuiStructure: gui is null"); return; }
+                if (gui == null) { ChanceCraft.LogInfo("DumpInventoryGuiStructure: gui is null"); return; }
                 var t = gui.GetType();
-                ChanceCraftPlugin.LogInfo("DumpInventoryGuiStructure: InventoryGui type = " + t.FullName);
+                ChanceCraft.LogInfo("DumpInventoryGuiStructure: InventoryGui type = " + t.FullName);
                 foreach (var f in t.GetFields(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic))
                 {
                     try
@@ -88,7 +136,7 @@ namespace ChanceCraft
                         object val = null;
                         try { val = f.GetValue(gui); } catch { val = "<unreadable>"; }
                         string valType = val == null ? "null" : (val.GetType().FullName + (val is System.Collections.IEnumerable ? " (IEnumerable)" : ""));
-                        ChanceCraftPlugin.LogInfo($"Field: {f.Name} : {f.FieldType.FullName} => {valType}");
+                        ChanceCraft.LogInfo($"Field: {f.Name} : {f.FieldType.FullName} => {valType}");
                     }
                     catch { }
                 }
@@ -102,7 +150,7 @@ namespace ChanceCraft
                             try { val = p.GetValue(gui); } catch { val = "<unreadable>"; }
                         }
                         string valType = val == null ? "null" : (val.GetType().FullName + (val is System.Collections.IEnumerable ? " (IEnumerable)" : ""));
-                        ChanceCraftPlugin.LogInfo($"Property: {p.Name} : {p.PropertyType.FullName} => {valType}");
+                        ChanceCraft.LogInfo($"Property: {p.Name} : {p.PropertyType.FullName} => {valType}");
                     }
                     catch { }
                 }
@@ -113,8 +161,8 @@ namespace ChanceCraft
                     if (selField != null)
                     {
                         var selVal = selField.GetValue(gui);
-                        if (selVal != null) ChanceCraftPlugin.LogInfo("m_selectedRecipe value type = " + selVal.GetType().FullName);
-                        else ChanceCraftPlugin.LogInfo("m_selectedRecipe is null");
+                        if (selVal != null) ChanceCraft.LogInfo("m_selectedRecipe value type = " + selVal.GetType().FullName);
+                        else ChanceCraft.LogInfo("m_selectedRecipe is null");
                     }
                 }
                 catch { }
@@ -123,10 +171,10 @@ namespace ChanceCraft
                 {
                     var rootGo = (gui as Component)?.gameObject;
                     if (rootGo == null) rootGo = typeof(InventoryGui).GetField("m_root", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)?.GetValue(gui) as GameObject;
-                    if (rootGo == null) ChanceCraftPlugin.LogInfo("DumpInventoryGuiStructure: gui.gameObject unknown");
+                    if (rootGo == null) ChanceCraft.LogInfo("DumpInventoryGuiStructure: gui.gameObject unknown");
                     else
                     {
-                        ChanceCraftPlugin.LogInfo("DumpInventoryGuiStructure: dumping child hierarchy (depth 3) for " + rootGo.name);
+                        ChanceCraft.LogInfo("DumpInventoryGuiStructure: dumping child hierarchy (depth 3) for " + rootGo.name);
                         void DumpChildren(UnityEngine.Transform tr, int depth)
                         {
                             if (tr == null || depth <= 0) return;
@@ -140,18 +188,18 @@ namespace ChanceCraft
                                 if (tog != null) info += " [Toggle]";
                                 var txt = c.GetComponent<UnityEngine.UI.Text>();
                                 if (txt != null) info += $" [Text='{txt.text}']";
-                                ChanceCraftPlugin.LogInfo(info);
+                                ChanceCraft.LogInfo(info);
                                 DumpChildren(c, depth - 1);
                             }
                         }
                         DumpChildren(rootGo.transform, 3);
                     }
                 }
-                catch (Exception ex) { ChanceCraftPlugin.LogWarning("DumpInventoryGuiStructure: child dump failed: " + ex); }
+                catch (Exception ex) { ChanceCraft.LogWarning("DumpInventoryGuiStructure: child dump failed: " + ex); }
             }
             catch (Exception ex)
             {
-                ChanceCraftPlugin.LogWarning("DumpInventoryGuiStructure failed: " + ex);
+                ChanceCraft.LogWarning("DumpInventoryGuiStructure failed: " + ex);
             }
         }
 
@@ -667,7 +715,7 @@ namespace ChanceCraft
             }
             catch (Exception ex)
             {
-                ChanceCraftPlugin.LogWarning($"TryGetRequirementsFromGui exception: {ex}");
+                ChanceCraft.LogWarning($"TryGetRequirementsFromGui exception: {ex}");
                 requirements = null;
                 return false;
             }
@@ -734,7 +782,7 @@ namespace ChanceCraft
 
                             if (found.m_quality > prevQ)
                             {
-                                ChanceCraftPlugin.LogInfo($"ForceRevertAfterRemoval: reverting target item itemHash={RuntimeHelpers.GetHashCode(found):X} name={found.m_shared?.m_name} oldQ={found.m_quality} -> {prevQ}");
+                                ChanceCraft.LogInfo($"ForceRevertAfterRemoval: reverting target item itemHash={RuntimeHelpers.GetHashCode(found):X} name={found.m_shared?.m_name} oldQ={found.m_quality} -> {prevQ}");
                                 found.m_quality = prevQ;
                                 try { found.m_variant = prevV; } catch { }
                             }
@@ -756,7 +804,7 @@ namespace ChanceCraft
                             {
                                 if (it.m_quality > prevQ)
                                 {
-                                    ChanceCraftPlugin.LogInfo($"ForceRevertAfterRemoval: reverting by-hash item itemHash={h:X} name={it.m_shared.m_name} oldQ={it.m_quality} -> {prevQ}");
+                                    ChanceCraft.LogInfo($"ForceRevertAfterRemoval: reverting by-hash item itemHash={h:X} name={it.m_shared.m_name} oldQ={it.m_quality} -> {prevQ}");
                                     it.m_quality = prevQ;
                                     var kv = ChanceCraft._preCraftSnapshotData?.FirstOrDefault(p => RuntimeHelpers.GetHashCode(p.Key) == h);
                                     if (!kv.Equals(default(KeyValuePair<ItemDrop.ItemData, (int, int)>)) && ChanceCraftRecipeHelpers.TryUnpackQualityVariant(kv.Value, out int pqf, out int pvf))
@@ -779,7 +827,7 @@ namespace ChanceCraft
                         if (!string.Equals(it.m_shared.m_name, resultName, StringComparison.OrdinalIgnoreCase)) continue;
                         if (it.m_quality > expectedPreQuality)
                         {
-                            ChanceCraftPlugin.LogInfo($"ForceRevertAfterRemoval: last-resort revert itemHash={RuntimeHelpers.GetHashCode(it):X} name={it.m_shared.m_name} oldQ={it.m_quality} -> {expectedPreQuality}");
+                            ChanceCraft.LogInfo($"ForceRevertAfterRemoval: last-resort revert itemHash={RuntimeHelpers.GetHashCode(it):X} name={it.m_shared.m_name} oldQ={it.m_quality} -> {expectedPreQuality}");
                             it.m_quality = expectedPreQuality;
                             var kv = ChanceCraft._preCraftSnapshotData?.FirstOrDefault(p => RuntimeHelpers.GetHashCode(p.Key) == RuntimeHelpers.GetHashCode(it));
                             if (!kv.Equals(default(KeyValuePair<ItemDrop.ItemData, (int, int)>)) && ChanceCraftRecipeHelpers.TryUnpackQualityVariant(kv.Value, out int pq3, out int pv3))

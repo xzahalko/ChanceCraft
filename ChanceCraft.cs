@@ -77,17 +77,17 @@ namespace ChanceCraft
 
         #region Logging & helpers (exposed as internal so helper classes can call)
 
-        internal static void LogWarning(string msg)
+        public static void LogWarning(string msg)
         {
             if (loggingEnabled?.Value ?? false) UnityEngine.Debug.LogWarning($"[ChanceCraft] {msg}");
         }
 
-        internal static void LogInfo(string msg)
+        public static void LogInfo(string msg)
         {
             if (loggingEnabled?.Value ?? false) UnityEngine.Debug.Log($"[ChanceCraft] {msg}");
         }
 
-        internal static void LogDebugIf(bool cond, string msg)
+        public static void LogDebugIf(bool cond, string msg)
         {
             if (cond) LogInfo(msg);
         }
