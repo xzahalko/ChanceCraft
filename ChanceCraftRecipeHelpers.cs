@@ -233,7 +233,7 @@ namespace ChanceCraft
         }
 
         // Attempt to extract the currently selected inventory item from InventoryGui (robust reflection fallback)
-        private static ItemDrop.ItemData GetSelectedInventoryItem(object __instance)
+        public static ItemDrop.ItemData GetSelectedInventoryItem(object __instance)
         {
             var gui = ChanceCraftUIHelpers.ResolveInventoryGui(__instance);
             if (gui == null) return null;
