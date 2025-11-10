@@ -13,10 +13,6 @@ namespace ChanceCraft
     public static class ChanceCraftRecipeHelpers
     {
         // Find the best candidate recipe from ObjectDB for upgrading the given craftRecipe result.
-        // Heuristic attempts to prefer recipes that:
-        // - have the same result name
-        // - consume the result (special upgrade recipes)
-        // - have reasonable total resource cost and include wood
         public static Recipe FindBestUpgradeRecipeCandidate(Recipe craftRecipe)
         {
             try
@@ -62,7 +58,6 @@ namespace ChanceCraft
                                 var resName = shared?.GetType().GetField("m_name", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)?.GetValue(shared) as string;
                                 if (!string.IsNullOrEmpty(resName))
                                 {
-                                    // manual unique-add to avoid needing HashSet
                                     if (!distinctNames.Any(n => string.Equals(n, resName, StringComparison.OrdinalIgnoreCase)))
                                         distinctNames.Add(resName);
                                     if (string.Equals(resName, resultName, StringComparison.OrdinalIgnoreCase)) consumesResult = true;
@@ -100,10 +95,6 @@ namespace ChanceCraft
         }
 
         // Conservative check whether the current gui+recipe context represents an upgrade operation.
-        // This mirrors the logic used in the original plugin:
-        // - check explicit m_craftUpgrade field on InventoryGui
-        // - check whether player's inventory contains lower-quality items of the same result
-        // - check whether the recipe consumes the result
         public static bool IsUpgradeOperation(object __instance, Recipe recipe)
         {
             var gui = ChanceCraftUIHelpers.ResolveInventoryGui(__instance);
@@ -149,9 +140,6 @@ namespace ChanceCraft
             return false;
         }
 
-        // Decide whether the invocation should be treated as an UPGRADE operation.
-        // Uses captured plugin state (ChanceCraftPlugin._isUpgradeDetected, _upgradeGuiRecipe, etc)
-        // but also performs conservative local checks.
         public static bool ShouldTreatAsUpgrade(object __instance, Recipe selectedRecipe, bool isUpgradeCall)
         {
             try
@@ -163,20 +151,16 @@ namespace ChanceCraft
                 bool guiHasUpgradeRecipe = false;
                 try { guiHasUpgradeRecipe = ChanceCraftUIHelpers.GetUpgradeRecipeFromGui(__instance) != null; } catch { guiHasUpgradeRecipe = false; }
 
-                // Determine the candidate target item (captured or currently selected)
                 ItemDrop.ItemData target = null;
                 try { target = ChanceCraftPlugin._upgradeTargetItem ?? GetSelectedInventoryItem(__instance); } catch { target = ChanceCraftPlugin._upgradeTargetItem; }
 
-                // If we have no target, don't treat as upgrade (conservative)
                 if (target == null) return false;
 
-                // Get recipe result name and target name safely
                 string recipeResultName = null;
                 try { recipeResultName = selectedRecipe?.m_item?.m_itemData?.m_shared?.m_name; } catch { recipeResultName = null; }
                 string targetName = null;
                 try { targetName = target?.m_shared?.m_name; } catch { targetName = null; }
 
-                // If names match and target quality is less than recipe final quality, it's an upgrade
                 if (!string.IsNullOrEmpty(recipeResultName) && !string.IsNullOrEmpty(targetName) &&
                     string.Equals(recipeResultName, targetName, StringComparison.OrdinalIgnoreCase))
                 {
@@ -184,7 +168,6 @@ namespace ChanceCraft
                     if (target.m_quality < finalQ) return true;
                 }
 
-                // If we captured a GUI upgrade recipe previously and it matches the selectedRecipe, treat as upgrade only if a target exists
                 if (ChanceCraftPlugin._upgradeGuiRecipe != null && selectedRecipe != null)
                 {
                     try
@@ -194,7 +177,6 @@ namespace ChanceCraft
                     catch { }
                 }
 
-                // Otherwise conservative: not an upgrade
                 return false;
             }
             catch { return false; }
@@ -202,7 +184,6 @@ namespace ChanceCraft
 
         // --- Local helpers used by the above functions ---
 
-        // Attempt to detect whether the recipe's resource list includes the result item (i.e., consumes result)
         private static bool RecipeConsumesResult(Recipe recipe)
         {
             if (recipe == null || recipe.m_item == null) return false;
@@ -232,7 +213,7 @@ namespace ChanceCraft
             return false;
         }
 
-        // Attempt to extract the currently selected inventory item from InventoryGui (robust reflection fallback)
+        // Make this public so other helpers can call it with __instance
         public static ItemDrop.ItemData GetSelectedInventoryItem(object __instance)
         {
             var gui = ChanceCraftUIHelpers.ResolveInventoryGui(__instance);

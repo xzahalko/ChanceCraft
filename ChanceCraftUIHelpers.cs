@@ -11,7 +11,7 @@ namespace ChanceCraft
     // Consolidated UI helpers (refreshing UI and extracting recipes from wrappers)
     public static class ChanceCraftUIHelpers
     {
-        #region Logging & small helpers (kept here so method calls don't require many namespace changes)
+        #region Logging & small helpers
 
         private static void LogWarning(string msg)
         {

@@ -12,6 +12,18 @@ using UnityEngine;
 // ChanceCraft.cs - main plugin class (refactored: UI & Resource helpers moved to separate files)
 // Minor adjustments made so helper classes can access shared state.
 
+using BepInEx;
+using BepInEx.Configuration;
+using HarmonyLib;
+using System;
+using System.Collections;
+using System.Collections.Generic;
+using System.Linq;
+using System.Reflection;
+using System.Runtime.CompilerServices;
+using UnityEngine;
+using UnityEngine.UI;
+
 namespace ChanceCraft
 {
     [BepInPlugin(pluginID, pluginName, pluginVersion)]
@@ -71,7 +83,7 @@ namespace ChanceCraft
             armorSuccessUpgrade = Config.Bind("General", "ArmorSuccessUpgrade", armorSuccessChance.Value, new ConfigDescription("Chance to successfully upgrade armors (0.0 - 1.0)"));
             arrowSuccessUpgrade = Config.Bind("General", "ArrowSuccessUpgrade", arrowSuccessChance.Value, new ConfigDescription("Chance to successfully upgrade arrows (0.0 - 1.0)"));
 
-            LogInfo($"ChanceCraft loaded: craft weapon={{weaponSuccessChance.Value}}, armor={{armorSuccessChance.Value}}, arrow={{arrowSuccessChance.Value}}; upgrade weapon={{weaponSuccessUpgrade.Value}},[...] ");
+            LogInfo($"ChanceCraft loaded: craft weapon={weaponSuccessChance.Value}, armor={armorSuccessChance.Value}, arrow={arrowSuccessChance.Value}; upgrade weapon={weaponSuccessUpgrade.Value}, armor={armorSuccessUpgrade.Value}, arrow={arrowSuccessUpgrade.Value}");
             Game.isModded = true;
         }
 
@@ -84,12 +96,12 @@ namespace ChanceCraft
 
         private static void LogWarning(string msg)
         {
-            if (loggingEnabled?.Value ?? false) UnityEngine.Debug.LogWarning($"[ChanceCraft] {{msg}}");
+            if (loggingEnabled?.Value ?? false) UnityEngine.Debug.LogWarning($"[ChanceCraft] {msg}");
         }
 
         private static void LogInfo(string msg)
         {
-            if (loggingEnabled?.Value ?? false) UnityEngine.Debug.Log($"[ChanceCraft] {{msg}}");
+            if (loggingEnabled?.Value ?? false) UnityEngine.Debug.Log($"[ChanceCraft] {msg}");
         }
 
         private static string ItemInfo(ItemDrop.ItemData it)
@@ -97,7 +109,7 @@ namespace ChanceCraft
             if (it == null) return "<null>";
             try
             {
-                return $"[{{it.GetHashCode():X8}}] name='{{it.m_shared?.m_name}}' q={{it.m_quality}} v={{it.m_variant}} stack={{it.m_stack}}";
+                return $"[{it.GetHashCode():X8}] name='{it.m_shared?.m_name}' q={it.m_quality} v={it.m_variant} stack={it.m_stack}";
             }
             catch
             {
@@ -113,9 +125,9 @@ namespace ChanceCraft
                 var name = r.m_item?.m_itemData?.m_shared?.m_name ?? "<no-result>";
                 int amount = r.m_amount;
                 var resourcesField = r.GetType().GetField("m_resources", BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
-                if (resourcesField == null) return $"Recipe(result='{{name}}', amount={{amount}})";
+                if (resourcesField == null) return $"Recipe(result='{name}', amount={amount})";
                 var res = resourcesField.GetValue(r) as IEnumerable;
-                if (res == null) return $"Recipe(result='{{name}}', amount={{amount}})";
+                if (res == null) return $"Recipe(result='{name}', amount={amount})";
                 var parts = new List<string>();
                 foreach (var req in res)
                 {
@@ -132,11 +144,11 @@ namespace ChanceCraft
                             var shared = itemData?.GetType().GetField("m_shared", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)?.GetValue(itemData);
                             resName = shared?.GetType().GetField("m_name", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)?.GetValue(shared) as string;
                         }
-                        parts.Add($"{{resName ?? "<unknown>"}}:{{amt}});
+                        parts.Add($"{resName ?? "<unknown>"}:{amt}");
                     }
                     catch { parts.Add("<res-err>"); }
                 }
-                return $"Recipe(result='{{name}}', amount={{amount}}, resources=[{{string.Join(", ", parts)}}])";
+                return $"Recipe(result='{name}', amount={amount}, resources=[{string.Join(", ", parts)}])";
             }
             catch { return "<bad recipe>"; }
         }
@@ -167,12 +179,12 @@ namespace ChanceCraft
                                 var shared = itemData?.GetType().GetField("m_shared", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)?.GetValue(itemData);
                                 rname = shared?.GetType().GetField("m_name", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)?.GetValue(shared) as string;
                             }
-                            parts.Add($"{{rname ?? "<unknown>"}}:{{reqAmt}});
+                            parts.Add($"{rname ?? "<unknown>"}:{reqAmt}");
                         }
                         catch { parts.Add("<res-err>"); }
                     }
                 }
-                return $"{{name}}|{{r.m_amount}}|{{string.Join(",", parts)}}";
+                return $"{name}|{r.m_amount}|{string.Join(",", parts)}";
             }
             catch { return "<fingerprint-err>"; }
         }
@@ -255,6 +267,7 @@ namespace ChanceCraft
                 }
             }
             catch { /* ignore */ }
+
             return null;
         }
 
@@ -298,7 +311,7 @@ namespace ChanceCraft
                     string name = r.m_item?.m_itemData?.m_shared?.m_name ?? r.name ?? "unknown";
                     int quality = r.m_item?.m_itemData?.m_quality ?? 0;
                     int variant = r.m_item?.m_itemData?.m_variant ?? 0;
-                    return $"{{name}}|q{{quality}}|v{{variant}}";
+                    return $"{name}|q{quality}|v{variant}";
                 }
                 catch
                 {
@@ -309,7 +322,7 @@ namespace ChanceCraft
             private static bool _suppressedThisCall = false;
             private static Recipe _savedRecipeForCall = null;
 
-            static void Prefix(InventoryGui __instance)
+            static void Prefix(InventoryGui gui)
             {
                 _suppressedThisCall = false;
                 _savedRecipeForCall = null;
@@ -329,7 +342,7 @@ namespace ChanceCraft
                 {
                     var selectedRecipeField = typeof(InventoryGui).GetField("m_selectedRecipe", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
                     if (selectedRecipeField == null) return;
-                    object value = selectedRecipeField.GetValue(__instance);
+                    object value = selectedRecipeField.GetValue(gui);
                     Recipe selectedRecipe = null;
                     if (value != null && value.GetType().Name == "RecipeDataPair")
                     {
@@ -362,7 +375,7 @@ namespace ChanceCraft
                             }
                             else
                             {
-                                var earlyGuiRecipe = GetUpgradeRecipeFromGui(__instance);
+                                var earlyGuiRecipe = GetUpgradeRecipeFromGui(gui);
                                 if (earlyGuiRecipe != null)
                                 {
                                     _upgradeGuiRecipe = earlyGuiRecipe;
@@ -391,7 +404,7 @@ namespace ChanceCraft
                     }
                     catch (Exception ex)
                     {
-                        LogWarning($"Prefix early discovery exception: {{ex}});
+                        LogWarning($"Prefix early discovery exception: {ex}");
                     }
 
                     _savedRecipeForCall = selectedRecipe;
@@ -403,7 +416,7 @@ namespace ChanceCraft
                         {
                             var igType = typeof(InventoryGui);
                             var fCraftUpgradeItem = igType.GetField("m_craftUpgradeItem", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-                            if (fCraftUpgradeItem != null) _upgradeTargetItem = fCraftUpgradeItem.GetValue(__instance) as ItemDrop.ItemData;
+                            if (fCraftUpgradeItem != null) _upgradeTargetItem = fCraftUpgradeItem.GetValue(gui) as ItemDrop.ItemData;
 
                             if (_upgradeTargetItem == null)
                             {
@@ -411,13 +424,13 @@ namespace ChanceCraft
                                 var fUpgradeIndex = igType.GetField("m_upgradeItemIndex", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
                                 if (fUpgradeItems != null)
                                 {
-                                    var list = fUpgradeItems.GetValue(__instance) as System.Collections.IList;
+                                    var list = fUpgradeItems.GetValue(gui) as System.Collections.IList;
                                     if (list != null && list.Count > 0)
                                     {
                                         int idx = -1;
                                         if (fUpgradeIndex != null)
                                         {
-                                            var idxObj = fUpgradeIndex.GetValue(__instance);
+                                            var idxObj = fUpgradeIndex.GetValue(gui);
                                             if (idxObj is int ii) idx = ii;
                                         }
                                         _upgradeTargetItem = (idx >= 0 && idx < list.Count) ? (list[idx] as ItemDrop.ItemData) : (list[0] as ItemDrop.ItemData);
@@ -435,7 +448,7 @@ namespace ChanceCraft
                                         var f = igType.GetField(nm, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
                                         if (f != null)
                                         {
-                                            var v = f.GetValue(__instance) as ItemDrop.ItemData;
+                                            var v = f.GetValue(gui) as ItemDrop.ItemData;
                                             if (v != null) { _upgradeTargetItem = v; break; }
                                         }
                                     }
@@ -449,7 +462,7 @@ namespace ChanceCraft
                     // Try to read GUI-provided requirements and detect if they imply an upgrade
                     try
                     {
-                        if (ChanceCraftUIHelpers.TryGetRequirementsFromGui(__instance, out var guiReqs) && guiReqs != null && guiReqs.Count > 0)
+                        if (ChanceCraftUIHelpers.TryGetRequirementsFromGui(gui, out var guiReqs) && guiReqs != null && guiReqs.Count > 0)
                         {
                             bool guiIndicatesUpgrade = false;
 
@@ -459,7 +472,7 @@ namespace ChanceCraft
                                 var craftUpgradeFieldLocal = typeof(InventoryGui).GetField("m_craftUpgrade", BindingFlags.Instance | BindingFlags.NonPublic);
                                 if (craftUpgradeFieldLocal != null)
                                 {
-                                    var cvObj = craftUpgradeFieldLocal.GetValue(__instance);
+                                    var cvObj = craftUpgradeFieldLocal.GetValue(gui);
                                     if (cvObj is int v && v > 1) guiIndicatesUpgrade = true;
                                 }
                             }
@@ -570,7 +583,7 @@ namespace ChanceCraft
                                         var craftUpgradeFieldLocal = typeof(InventoryGui).GetField("m_craftUpgrade", BindingFlags.Instance | BindingFlags.NonPublic);
                                         if (craftUpgradeFieldLocal != null)
                                         {
-                                            var cvObj = craftUpgradeFieldLocal.GetValue(__instance);
+                                            var cvObj = craftUpgradeFieldLocal.GetValue(gui);
                                             if (cvObj is int v && v > 1) explicitCraftUpgrade = true;
                                         }
                                     }
@@ -579,7 +592,7 @@ namespace ChanceCraft
                                     bool selectedInvItemLowerQuality = false;
                                     try
                                     {
-                                        var selInvItem = GetSelectedInventoryItem(__instance);
+                                        var selInvItem = GetSelectedInventoryItem(gui);
                                         var finalQuality = selectedRecipe.m_item?.m_itemData?.m_quality ?? 0;
                                         if (selInvItem != null && selInvItem.m_shared != null && !string.IsNullOrEmpty(selectedRecipe.m_item?.m_itemData?.m_shared?.m_name))
                                         {
@@ -599,6 +612,7 @@ namespace ChanceCraft
                                 }
                                 catch { /* ignore */ }
                             }
+                            catch { /* ignore */ }
 
                             if (guiIndicatesUpgrade)
                             {
@@ -616,7 +630,7 @@ namespace ChanceCraft
                                         var craftUpgradeFieldLocal = typeof(InventoryGui).GetField("m_craftUpgrade", BindingFlags.Instance | BindingFlags.NonPublic);
                                         if (craftUpgradeFieldLocal != null)
                                         {
-                                            var cv = craftUpgradeFieldLocal.GetValue(__instance);
+                                            var cv = craftUpgradeFieldLocal.GetValue(gui);
                                             if (cv is int v && v > 0) levelsToUpgrade = v;
                                         }
                                     }
@@ -687,13 +701,13 @@ namespace ChanceCraft
                                 _isUpgradeDetected = true;
                                 _upgradeGuiRequirements = normalized;
                                 var dbgJoined = string.Join(", ", _upgradeGuiRequirements.Select(x => x.name + ":" + x.amount));
-                                LogInfo($"Prefix-DBG: GUI requirement list indicates UPGRADE -> {{dbgJoined}});
+                                LogInfo("Prefix-DBG: GUI requirement list indicates UPGRADE -> " + dbgJoined);
                             }
                         }
                     }
                     catch (Exception ex)
                     {
-                        LogWarning($"Prefix try-get-reqs exception: {{ex}});
+                        LogWarning($"Prefix try-get-reqs exception: {ex}");
                     }
 
                     // If explicit craft multiplier present, treat as upgrade and skip suppression
@@ -702,14 +716,14 @@ namespace ChanceCraft
                         var craftUpgradeField = typeof(InventoryGui).GetField("m_craftUpgrade", BindingFlags.Instance | BindingFlags.NonPublic);
                         if (craftUpgradeField != null)
                         {
-                            var cvObj = craftUpgradeField.GetValue(__instance);
+                            var cvObj = craftUpgradeField.GetValue(gui);
                             if (cvObj is int v && v > 1)
                             {
                                 _savedRecipeForCall = null;
                                 _isUpgradeDetected = true;
-                                _upgradeGuiRecipe = GetUpgradeRecipeFromGui(__instance);
+                                _upgradeGuiRecipe = GetUpgradeRecipeFromGui(gui);
                                 _upgradeRecipe = _upgradeRecipe ?? selectedRecipe;
-                                _upgradeTargetItem = GetSelectedInventoryItem(__instance);
+                                _upgradeTargetItem = GetSelectedInventoryItem(gui);
                                 return;
                             }
                         }
@@ -760,7 +774,7 @@ namespace ChanceCraft
                                         {
                                             if (!existing.Contains(it)) existing.Add(it);
                                             existingData[it] = (it.m_quality, it.m_variant);
-                                            LogInfo($"Prefix snapshot: found existing {{ItemInfo(it)}});
+                                            LogInfo($"Prefix snapshot: found existing {ItemInfo(it)}");
                                         }
                                     }
                                     lock (typeof(ChanceCraftPlugin))
@@ -789,7 +803,7 @@ namespace ChanceCraft
                         {
                             var craftedName = selectedRecipe.m_item?.m_itemData?.m_shared?.m_name;
                             int craftedQuality = selectedRecipe.m_item?.m_itemData?.m_quality ?? 0;
-                            var selectedInventoryItem = GetSelectedInventoryItem(__instance);
+                            var selectedInventoryItem = GetSelectedInventoryItem(gui);
 
                             if (selectedInventoryItem != null &&
                                 selectedInventoryItem.m_shared != null &&
@@ -800,7 +814,7 @@ namespace ChanceCraft
                                 _isUpgradeDetected = true;
                                 _upgradeTargetItem = selectedInventoryItem;
                                 _upgradeRecipe = _upgradeRecipe ?? selectedRecipe;
-                                _upgradeGuiRecipe = GetUpgradeRecipeFromGui(__instance) ?? selectedRecipe;
+                                _upgradeGuiRecipe = GetUpgradeRecipeFromGui(gui) ?? selectedRecipe;
                                 _savedRecipeForCall = null;
                                 return;
                             }
@@ -825,7 +839,7 @@ namespace ChanceCraft
                                         _isUpgradeDetected = true;
                                         _upgradeTargetItem = foundLower;
                                         _upgradeRecipe = _upgradeRecipe ?? selectedRecipe;
-                                        _upgradeGuiRecipe = GetUpgradeRecipeFromGui(__instance) ?? selectedRecipe;
+                                        _upgradeGuiRecipe = GetUpgradeRecipeFromGui(gui) ?? selectedRecipe;
                                         _savedRecipeForCall = null;
                                         return;
                                     }
@@ -841,7 +855,7 @@ namespace ChanceCraft
                             {
                                 _isUpgradeDetected = true;
                                 _upgradeRecipe = _upgradeRecipe ?? selectedRecipe;
-                                _upgradeGuiRecipe = GetUpgradeRecipeFromGui(__instance) ?? selectedRecipe;
+                                _upgradeGuiRecipe = GetUpgradeRecipeFromGui(gui) ?? selectedRecipe;
                                 _savedRecipeForCall = null;
                                 return;
                             }
@@ -928,19 +942,19 @@ namespace ChanceCraft
                     }
                     catch (Exception ex)
                     {
-                        LogWarning($"Prefix snapshot/build exception: {{ex}});
+                        LogWarning($"Prefix snapshot/build exception: {ex}");
                     }
                 }
                 catch (Exception ex)
                 {
-                    LogWarning($"Prefix outer exception: {{ex}});
+                    LogWarning($"Prefix outer exception: {ex}");
                     _suppressedThisCall = false;
                     _savedRecipeForCall = null;
                     IsDoCraft = false;
                 }
             }
 
-            static void Postfix(InventoryGui __instance, Player player)
+            static void Postfix(InventoryGui gui, Player player)
             {
                 try
                 {
@@ -977,12 +991,12 @@ namespace ChanceCraft
 
                     try
                     {
-                        if (_isUpgradeDetected || ChanceCraftRecipeHelpers.IsUpgradeOperation(__instance, recipeForLogic))
+                        if (_isUpgradeDetected || ChanceCraftRecipeHelpers.IsUpgradeOperation(gui, recipeForLogic))
                         {
-                            if (_upgradeGuiRecipe == null) _upgradeGuiRecipe = GetUpgradeRecipeFromGui(__instance);
-                            if (_upgradeTargetItem == null) _upgradeTargetItem = GetSelectedInventoryItem(__instance);
+                            if (_upgradeGuiRecipe == null) _upgradeGuiRecipe = GetUpgradeRecipeFromGui(gui);
+                            if (_upgradeTargetItem == null) _upgradeTargetItem = GetSelectedInventoryItem(gui);
 
-                            var resultFromTry = TrySpawnCraftEffect(__instance, recipeForLogic, true);
+                            var resultFromTry = TrySpawnCraftEffect(gui, recipeForLogic, true);
                             if (resultFromTry == null)
                             {
                                 try
@@ -1014,7 +1028,7 @@ namespace ChanceCraft
                             }
                         }
 
-                        Recipe recept = TrySpawnCraftEffect(__instance, recipeForLogic, false);
+                        Recipe recept = TrySpawnCraftEffect(gui, recipeForLogic, false);
 
                         if (player != null && recept != null)
                         {
@@ -1087,18 +1101,18 @@ namespace ChanceCraft
                             }
                             catch (Exception ex)
                             {
-                                LogWarning($"Postfix removal exception: {{ex}});
+                                LogWarning($"Postfix removal exception: {ex}");
                             }
                         }
                     }
                     catch (Exception ex)
                     {
-                        LogWarning($"Postfix logic exception: {{ex}});
+                        LogWarning($"Postfix logic exception: {ex}");
                     }
                 }
                 catch (Exception ex)
                 {
-                    LogWarning($"Postfix outer exception: {{ex}});
+                    LogWarning($"Postfix outer exception: {ex}");
                     _suppressedThisCall = false;
                     _savedRecipeForCall = null;
                     IsDoCraft = false;
@@ -1230,7 +1244,7 @@ namespace ChanceCraft
             {
                 var recipeKeyDbg = selectedRecipe != null ? RecipeFingerprint(selectedRecipe) : "null";
                 float chosenChance = isUpgradeNow ? upgradeChanceAdjusted : craftChanceAdjusted;
-                LogInfo($"TrySpawnCraftEffect-DBG: recipe={{recipeKeyDbg}} itemType={{itemType}} quality={{qualityLevel}} craftChance={{craftChanceAdjusted:F3}} upgradeChance={{upgradeChanceAdjusted:F3}} [...] ");
+                LogInfo($"TrySpawnCraftEffect-DBG: recipe={recipeKeyDbg} itemType={itemType} quality={qualityLevel} craftChance={craftChanceAdjusted:F3} upgradeChance={upgradeChanceAdjusted:F3} chosenChance={chosenChance:F3} rand={randVal:F3}");
             }
             catch { }
 
@@ -1243,7 +1257,7 @@ namespace ChanceCraft
                 int ugGuiReqCount = _upgradeGuiRequirements != null ? _upgradeGuiRequirements.Count : 0;
                 bool guiHasUpgradeRecipe = false;
                 try { guiHasUpgradeRecipe = ChanceCraftUIHelpers.GetUpgradeRecipeFromGui(gui) != null; } catch { guiHasUpgradeRecipe = false; }
-                LogInfo($"TSCE-DBG-DETAIL: isUpgradeCall={{isUpgradeCall}} _isUpgradeDetected={{_isUpgradeDetected}} IsUpgradeOperation={{ChanceCraftRecipeHelpers.IsUpgradeOperation(gui, selectedReci[...]" 
+                LogInfo($"TSCE-DBG-DETAIL: isUpgradeCall={isUpgradeCall} _isUpgradeDetected={_isUpgradeDetected} IsUpgradeOperation={ChanceCraftRecipeHelpers.IsUpgradeOperation(gui, selectedRecipe)} guiHasUpgradeRecipe={guiHasUpgradeRecipe} _upgradeGuiRecipe={ugGuiRecipeKey} _upgradeRecipe={ugRecipeKey} targetHash={ugTargetHash} guiReqCount={ugGuiReqCount}");
             }
             catch { }
 
@@ -1311,7 +1325,7 @@ namespace ChanceCraft
                             var targetHash = _upgradeTargetItem != null ? RuntimeHelpers.GetHashCode(_upgradeTargetItem).ToString("X") : "null";
                             var snapshotCount = (_preCraftSnapshot != null) ? _preCraftSnapshot.Count : 0;
                             var snapshotDataCount = (_preCraftSnapshotData != null) ? _preCraftSnapshotData.Count : 0;
-                            LogInfo($"TrySpawnCraftEffect-DBG SUCCESS UPGRADE: recipeToUse={{recipeKey}} targetHash={{targetHash}} preSnapshotCount={{snapshotCount}} preSnapshotData={{snapshotDataCount}});
+                            LogInfo($"TrySpawnCraftEffect-DBG SUCCESS UPGRADE: recipeToUse={recipeKey} targetHash={targetHash} preSnapshotCount={snapshotCount} preSnapshotData={snapshotDataCount}");
                         }
                         catch { }
 
@@ -1332,7 +1346,7 @@ namespace ChanceCraft
                     }
                     catch (Exception ex)
                     {
-                        LogWarning($"TrySpawnCraftEffect success/upgrade removal exception: {{ex}});
+                        LogWarning($"TrySpawnCraftEffect success/upgrade removal exception: {ex}");
                     }
 
                     return null;
@@ -1356,7 +1370,7 @@ namespace ChanceCraft
 
                                 var targetItem = _upgradeTargetItem ?? GetSelectedInventoryItem(gui);
                                 var targetHashLog = targetItem != null ? RuntimeHelpers.GetHashCode(targetItem).ToString("X") : "null";
-                                LogInfo($"TrySpawnCraftEffect-DBG suppressed-success treating as UPGRADE: recipe={{RecipeFingerprint(recipeToUse)}} target={{targetHashLog}});
+                                LogInfo($"TrySpawnCraftEffect-DBG suppressed-success treating as UPGRADE: recipe={RecipeFingerprint(recipeToUse)} target={targetHashLog}");
 
                                 ChanceCraftResourceHelpers.RemoveRequiredResourcesUpgrade(gui, player, recipeToUse, targetItem, true);
                             }
@@ -1365,7 +1379,7 @@ namespace ChanceCraft
                                 ChanceCraftResourceHelpers.RemoveRequiredResources(gui, player, selectedRecipe, true, false);
                             }
                         }
-                        catch (Exception ex) { LogWarning($"TrySpawnCraftEffect success removal exception: {{ex}}); }
+                        catch (Exception ex) { LogWarning($"TrySpawnCraftEffect success removal exception: {ex}"); }
 
                         // Clear GUI-captured upgrade state after this branch so stale GUI data won't persist.
                         ClearCapturedUpgradeGui();
@@ -1385,7 +1399,7 @@ namespace ChanceCraft
                         {
                             var recipeKey = selectedRecipe != null ? RecipeFingerprint(selectedRecipe) : "null";
                             int preSnapshotEntries = _preCraftSnapshotData != null ? _preCraftSnapshotData.Count : 0;
-                            LogInfo($"TrySpawnCraftEffect-DBG FAILURE UPGRADE: recipe={{recipeKey}} preSnapshotData={{preSnapshotEntries}} upgradeTargetIndex={{_upgradeTargetItemIndex}});
+                            LogInfo($"TrySpawnCraftEffect-DBG FAILURE UPGRADE: recipe={recipeKey} preSnapshotData={preSnapshotEntries} upgradeTargetIndex={_upgradeTargetItemIndex}");
                         }
                         catch { }
 
@@ -1449,23 +1463,288 @@ namespace ChanceCraft
 
                                     if (_preCraftSnapshotData != null && _preCraftSnapshotData.Count > 0)
                                     {
-                                        var preQs = _preCraftSnapshotData.Values.Select(v => { if (ChanceCraftResourceHelpers.TryUnpackQualityVariant(v, out int a, out int b)) return a; return 0; });
-                                        // additional logic using preQs if needed
+                                        var preQs = _preCraftSnapshotData.Values.Select(v => { if (ChanceCraftResourceHelpers.TryUnpackQualityVariant(v, out int a, out int b)) return a; return 0; }).ToList();
+                                        if (preQs.Count > 0) expectedPreQuality = Math.Max(0, preQs.Max());
+                                    }
+
+                                    if (!string.IsNullOrEmpty(resultName) && Player.m_localPlayer != null)
+                                    {
+                                        var invItems2 = Player.m_localPlayer.GetInventory()?.GetAllItems();
+                                        if (invItems2 != null)
+                                        {
+                                            foreach (var it in invItems2)
+                                            {
+                                                if (it == null || it.m_shared == null) continue;
+                                                if (!string.Equals(it.m_shared.m_name, resultName, StringComparison.OrdinalIgnoreCase)) continue;
+                                                if (it.m_quality <= expectedPreQuality) continue;
+                                                if (_preCraftSnapshot != null && _preCraftSnapshot.Contains(it)) continue;
+                                                it.m_quality = expectedPreQuality;
+                                            }
+                                        }
                                     }
                                 }
                                 catch { }
                             }
+
+                            if (!didRevertAny && _upgradeTargetItemIndex >= 0)
+                            {
+                                try
+                                {
+                                    var inv = Player.m_localPlayer?.GetInventory();
+                                    var all = inv?.GetAllItems();
+                                    if (all != null && _upgradeTargetItemIndex >= 0 && _upgradeTargetItemIndex < all.Count)
+                                    {
+                                        var candidate = all[_upgradeTargetItemIndex];
+                                        if (candidate != null && candidate.m_shared != null)
+                                        {
+                                            string resultName = selectedRecipe.m_item?.m_itemData?.m_shared?.m_name;
+                                            int finalQuality = selectedRecipe.m_item?.m_itemData?.m_quality ?? 0;
+                                            int expectedPreQuality = Math.Max(0, finalQuality - 1);
+
+                                            if (_preCraftSnapshotData != null)
+                                            {
+                                                var kv = _preCraftSnapshotData.FirstOrDefault(p => p.Key != null && p.Key.m_shared != null && string.Equals(p.Key.m_shared.m_name, resultName, StringComparison.OrdinalIgnoreCase));
+                                                if (!kv.Equals(default(KeyValuePair<ItemDrop.ItemData, (int, int)>)) && ChanceCraftResourceHelpers.TryUnpackQualityVariant(kv.Value, out int pq3, out int pv3))
+                                                    expectedPreQuality = pq3;
+                                            }
+
+                                            if (string.Equals(candidate.m_shared.m_name, resultName, StringComparison.OrdinalIgnoreCase) && candidate.m_quality > expectedPreQuality)
+                                            {
+                                                candidate.m_quality = expectedPreQuality;
+                                                didRevertAny = true;
+                                            }
+                                        }
+                                    }
+                                }
+                                catch { }
+                            }
+
+                            if (!didRevertAny && _preCraftSnapshotHashQuality != null && _preCraftSnapshotHashQuality.Count > 0)
+                            {
+                                try
+                                {
+                                    string resultName = selectedRecipe.m_item?.m_itemData?.m_shared?.m_name;
+                                    int finalQuality = selectedRecipe.m_item?.m_itemData?.m_quality ?? 0;
+                                    int expectedPreQuality = Math.Max(0, finalQuality - 1);
+
+                                    var invItems3 = Player.m_localPlayer?.GetInventory()?.GetAllItems();
+                                    if (invItems3 != null)
+                                    {
+                                        foreach (var it in invItems3)
+                                        {
+                                            if (it == null || it.m_shared == null) continue;
+                                            int h = RuntimeHelpers.GetHashCode(it);
+
+                                            if (_preCraftSnapshotHashQuality.TryGetValue(h, out int prevQ))
+                                            {
+                                                if (it.m_quality > prevQ)
+                                                {
+                                                    it.m_quality = prevQ;
+                                                    var kv = _preCraftSnapshotData.FirstOrDefault(p => RuntimeHelpers.GetHashCode(p.Key) == h);
+                                                    if (!kv.Equals(default(KeyValuePair<ItemDrop.ItemData, (int, int)>)) && ChanceCraftResourceHelpers.TryUnpackQualityVariant(kv.Value, out int pq4, out int pv4))
+                                                        it.m_variant = pv4;
+                                                    didRevertAny = true;
+                                                }
+                                            }
+                                            else
+                                            {
+                                                if (!string.IsNullOrEmpty(resultName) &&
+                                                    string.Equals(it.m_shared.m_name, resultName, StringComparison.OrdinalIgnoreCase) &&
+                                                    it.m_quality > expectedPreQuality)
+                                                {
+                                                    it.m_quality = expectedPreQuality;
+                                                    didRevertAny = true;
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                catch { }
+
+                            }
+
+                            // --- FORCED/EXTRA REVERT PASS (failsafe) ---
+                            try
+                            {
+                                string resultName = selectedRecipe.m_item?.m_itemData?.m_shared?.m_name;
+                                int finalQuality = selectedRecipe.m_item?.m_itemData?.m_quality ?? 0;
+                                int expectedPreQuality = Math.Max(0, finalQuality - 1);
+
+                                try
+                                {
+                                    if (_preCraftSnapshotData != null && _preCraftSnapshotData.Count > 0)
+                                    {
+                                        var preQs = _preCraftSnapshotData.Values.Select(v => { if (ChanceCraftResourceHelpers.TryUnpackQualityVariant(v, out int a, out int b)) return a; return 0; }).ToList();
+                                        if (preQs.Count > 0) expectedPreQuality = Math.Max(0, preQs.Max());
+                                    }
+                                }
+                                catch { }
+
+                                try
+                                {
+                                    LogInfo($"TrySpawnCraftEffect-DBG RevertCheck: resultName={resultName} finalQuality={finalQuality} expectedPreQuality={expectedPreQuality} preSnapshotCount={_preCraftSnapshotData?.Count ?? 0}");
+                                }
+                                catch { }
+
+                                var inv = Player.m_localPlayer?.GetInventory();
+                                var all = inv?.GetAllItems();
+                                if (!string.IsNullOrEmpty(resultName) && all != null)
+                                {
+                                    foreach (var it in all)
+                                    {
+                                        try
+                                        {
+                                            if (it == null || it.m_shared == null) continue;
+                                            if (!string.Equals(it.m_shared.m_name, resultName, StringComparison.OrdinalIgnoreCase)) continue;
+                                            bool wasPre = _preCraftSnapshot != null && _preCraftSnapshot.Contains(it);
+                                            int curQ = it.m_quality;
+                                            if (curQ > expectedPreQuality && !wasPre)
+                                            {
+                                                try
+                                                {
+                                                    LogInfo($"TrySpawnCraftEffect-DBG RevertCheck: resultName={resultName} finalQuality={finalQuality} expectedPreQuality={expectedPreQuality} preSnapshotCount={_preCraftSnapshotData?.Count ?? 0}");
+                                                }
+                                                catch { }
+                                                it.m_quality = expectedPreQuality;
+                                                try
+                                                {
+                                                    var kv = _preCraftSnapshotData?.FirstOrDefault(p => RuntimeHelpers.GetHashCode(p.Key) == RuntimeHelpers.GetHashCode(it));
+                                                    if (!kv.Equals(default(KeyValuePair<ItemDrop.ItemData, (int, int)>)) && ChanceCraftResourceHelpers.TryUnpackQualityVariant(kv.Value, out int pq5, out int pv5))
+                                                    {
+                                                        it.m_variant = pv5;
+                                                        LogInfo($"TrySpawnCraftEffect-DBG FORCED REVERT: restored variant={it.m_variant} for itemHash={RuntimeHelpers.GetHashCode(it):X}");
+                                                    }
+                                                }
+                                                catch { }
+                                            }
+                                        }
+                                        catch { }
+                                    }
+                                }
+                            }
+                            catch { }
+
+                            // perform UI refresh after revert attempts (keep snapshots intact until after final defensive revert and resource removal)
+                            try
+                            {
+                                ChanceCraftUIHelpers.ForceSimulateTabSwitchRefresh(gui);
+                                try { ChanceCraftUIHelpers.RefreshInventoryGui(gui); } catch { }
+                                try { ChanceCraftUIHelpers.RefreshCraftingPanel(gui); } catch { }
+                                try { gui?.StartCoroutine(ChanceCraftUIHelpers.DelayedRefreshCraftingPanel(gui, 1)); } catch { }
+                                UnityEngine.Debug.LogWarning("[ChanceCraft] TrySpawnCraftEffect: performed UI refresh after revert attempts.");
+                            }
+                            catch (Exception exRefresh)
+                            {
+                                UnityEngine.Debug.LogWarning($"[ChanceCraft] TrySpawnCraftEffect: UI refresh after revert failed: {exRefresh}");
+                            }
+
+                            try { Player.m_localPlayer?.Message(MessageHud.MessageType.Center, "<color=red>Upgrade failed!</color>"); } catch { }
                         }
-                        catch (Exception revertEx)
+                        // end lock
+
+                        // Diagnostic: inventory snapshot BEFORE removal
+                        try
                         {
-                            LogWarning($"Revert operations failed: {{revertEx}});
+                            var target = _upgradeTargetItem ?? GetSelectedInventoryItem(gui);
+                            var targetHash = target != null ? RuntimeHelpers.GetHashCode(target).ToString("X") : "null";
+                            var inv = Player.m_localPlayer?.GetInventory();
+                            int woodBefore = 0, scrapBefore = 0, hideBefore = 0;
+                            if (inv != null)
+                            {
+                                var all = inv.GetAllItems();
+                                try { woodBefore = all.Where(it => it != null && it.m_shared != null && string.Equals(it.m_shared.m_name, "$item_wood", StringComparison.OrdinalIgnoreCase)).Sum(it => it.m_stack); } catch { }
+                                try { scrapBefore = all.Where(it => it != null && it.m_shared != null && string.Equals(it.m_shared.m_name, "$item_leatherscraps", StringComparison.OrdinalIgnoreCase)).Sum(it => it.m_stack); } catch { }
+                                try { hideBefore = all.Where(it => it != null && it.m_shared != null && string.Equals(it.m_shared.m_name, "$item_deerhide", StringComparison.OrdinalIgnoreCase)).Sum(it => it.m_stack); } catch { }
+                            }
+                            LogInfo($"TrySpawnCraftEffect-DBG BEFORE removal: targetHash={targetHash} wood={woodBefore} scraps={scrapBefore} hides={hideBefore} didRevertAny={didRevertAny}");
+                        }
+                        catch { }
+
+                        var recipeToUse = _upgradeGuiRecipe ?? _upgradeRecipe ?? ChanceCraftUIHelpers.GetUpgradeRecipeFromGui(gui) ?? selectedRecipe;
+                        if (ReferenceEquals(recipeToUse, selectedRecipe))
+                        {
+                            var candidate = ChanceCraftRecipeHelpers.FindBestUpgradeRecipeCandidate(selectedRecipe);
+                            if (candidate != null) recipeToUse = candidate;
+                        }
+
+                        var upgradeTarget = _upgradeTargetItem ?? GetSelectedInventoryItem(gui);
+                        ChanceCraftResourceHelpers.RemoveRequiredResourcesUpgrade(gui, Player.m_localPlayer, recipeToUse, upgradeTarget, false);
+
+                        // Defensive: Force revert after removal (revert only the selected/identified target when possible)
+                        try { ChanceCraftResourceHelpers.ForceRevertAfterRemoval(gui, recipeToUse, upgradeTarget); } catch { }
+
+                        // Now clear snapshots and other state AFTER we used snapshot data for revert
+                        lock (typeof(ChanceCraftPlugin))
+                        {
+                            _preCraftSnapshot = null;
+                            _preCraftSnapshotData = null;
+                            _snapshotRecipe = null;
+                            _upgradeTargetItemIndex = -1;
+                            _preCraftSnapshotHashQuality = null;
+                        }
+
+                        // Clear GUI-captured upgrade state after performing upgrade-failure removal
+                        ClearCapturedUpgradeGui();
+                    }
+                    catch { }
+
+                    return null;
+                }
+                else
+                {
+                    // Non-upgrade failure path
+                    try
+                    {
+                        bool gameAlreadyHandledNormal = false;
+                        lock (typeof(ChanceCraftPlugin))
+                        {
+                            if (_snapshotRecipe != null && _snapshotRecipe == selectedRecipe && _preCraftSnapshotData != null && _preCraftSnapshotData.Count > 0)
+                            {
+                                foreach (var kv in _preCraftSnapshotData)
+                                {
+                                    var item = kv.Key;
+                                    var pre = kv.Value;
+                                    if (item == null || item.m_shared == null) continue;
+                                    if (ChanceCraftResourceHelpers.TryUnpackQualityVariant(pre, out int pq6, out int pv6))
+                                    {
+                                        int currentQuality = item.m_quality;
+                                        int currentVariant = item.m_variant;
+                                        if (currentQuality > pq6 && currentVariant == pv6)
+                                        {
+                                            gameAlreadyHandledNormal = true;
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        if (gameAlreadyHandledNormal)
+                        {
+                            lock (typeof(ChanceCraftPlugin))
+                            {
+                                _preCraftSnapshot = null;
+                                _preCraftSnapshotData = null;
+                                _snapshotRecipe = null;
+                                _upgradeTargetItemIndex = -1;
+                                _preCraftSnapshotHashQuality = null;
+                            }
+
+                            // clear GUI-captured upgrade state as we are not treating this as upgrade
+                            ClearCapturedUpgradeGui();
+                            return null;
                         }
                     }
+                    catch { }
+
+                    try { ChanceCraftResourceHelpers.RemoveRequiredResources(gui, Player.m_localPlayer, selectedRecipe, false, false); } catch { }
+                    try { Player.m_localPlayer?.Message(MessageHud.MessageType.Center, "<color=red>Crafting failed!</color>"); } catch { }
+
+                    // clear GUI-captured upgrade state after non-upgrade failure
+                    ClearCapturedUpgradeGui();
+                    return selectedRecipe;
                 }
-                return null;
             }
         }
-
         #endregion
     }
 }

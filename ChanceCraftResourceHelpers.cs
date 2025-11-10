@@ -11,7 +11,7 @@ namespace ChanceCraft
     // Consolidated resource removal and quality/variant unpack helpers
     public static class ChanceCraftResourceHelpers
     {
-        #region Logging & small helpers (kept here so method calls don't require many namespace changes)
+        #region Logging & small helpers
 
         private static void LogWarning(string msg)
         {
