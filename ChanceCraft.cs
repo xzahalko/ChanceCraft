@@ -821,46 +821,17 @@ namespace ChanceCraft
 
                         if (validReqs.Count <= 1) return;
 
-                        string prefabName = TryGetPrefabNameFromInventoryGui(__instance);
-                        ItemDrop.ItemData.ItemType? itemType = TryGetItemTypeFromInventoryGui(__instance);
-
-                        // original eligibility by item type (if we could determine itemType)
-                        bool isEligibleByType = false;
-                        if (itemType.HasValue)
-                        {
-                            var t = itemType.Value;
-                            isEligibleByType =
-                                t == ItemDrop.ItemData.ItemType.OneHandedWeapon ||
-                                t == ItemDrop.ItemData.ItemType.TwoHandedWeapon ||
-                                t == ItemDrop.ItemData.ItemType.Bow ||
-                                t == ItemDrop.ItemData.ItemType.TwoHandedWeaponLeft ||
-                                t == ItemDrop.ItemData.ItemType.Shield ||
-                                t == ItemDrop.ItemData.ItemType.Helmet ||
-                                t == ItemDrop.ItemData.ItemType.Chest ||
-                                t == ItemDrop.ItemData.ItemType.Legs ||
-                                t == ItemDrop.ItemData.ItemType.Ammo;
-                        }
-
-                        // If not eligible by type, explicitly check each configured prefab line (line1..line5).
-                        bool isEligible = isEligibleByType;
-                        if (!isEligible)
-                        {
-                            var plugin = BepInEx.Bootstrap.Chainloader.ManagerObject.GetComponent<ChanceCraft>();
-                            if (plugin != null && !string.IsNullOrWhiteSpace(prefabName))
-                            {
-                                // Explicit per-line comparison (case-sensitive to match Valheim prefabs)
-                                foreach (var line in plugin.GetConfiguredLines())
-                                {
-                                    if (!line.IsActive) continue;
-                                    if (line.ItemPrefab == prefabName)
-                                    {
-                                        isEligible = true;
-                                        plugin.Logger.LogDebug($"ChanceCraft: prefab '{prefabName}' matched config line with increase {line.IncreaseCraftPercentage}");
-                                        break;
-                                    }
-                                }
-                            }
-                        }
+                        var itemType = selectedRecipe.m_item?.m_itemData?.m_shared?.m_itemType;
+                        bool isEligible =
+                            itemType == ItemDrop.ItemData.ItemType.OneHandedWeapon ||
+                            itemType == ItemDrop.ItemData.ItemType.TwoHandedWeapon ||
+                            itemType == ItemDrop.ItemData.ItemType.Bow ||
+                            itemType == ItemDrop.ItemData.ItemType.TwoHandedWeaponLeft ||
+                            itemType == ItemDrop.ItemData.ItemType.Shield ||
+                            itemType == ItemDrop.ItemData.ItemType.Helmet ||
+                            itemType == ItemDrop.ItemData.ItemType.Chest ||
+                            itemType == ItemDrop.ItemData.ItemType.Legs ||
+                            itemType == ItemDrop.ItemData.ItemType.Ammo;
 
                         if (!isEligible) return;
 
