@@ -17,7 +17,7 @@ namespace ChanceCraft
     {
         public const string pluginID = "deep.ChanceCraft";
         public const string pluginName = "Chance Craft";
-        public const string pluginVersion = "1.1.3";
+        public const string pluginVersion = "1.1.5";
 
         private Harmony _harmony;
 
@@ -28,6 +28,22 @@ namespace ChanceCraft
         internal static ConfigEntry<float> armorSuccessUpgrade;
         internal static ConfigEntry<float> arrowSuccessUpgrade;
         internal static ConfigEntry<bool> loggingEnabled;
+
+        // Config entries per-line
+        private ConfigEntry<float> line1_increase;
+        private ConfigEntry<string> line1_item;
+
+        private ConfigEntry<float> line2_increase;
+        private ConfigEntry<string> line2_item;
+
+        private ConfigEntry<float> line3_increase;
+        private ConfigEntry<string> line3_item;
+
+        private ConfigEntry<float> line4_increase;
+        private ConfigEntry<string> line4_item;
+
+        private ConfigEntry<float> line5_increase;
+        private ConfigEntry<string> line5_item;
 
         // Runtime shared state (exposed to helpers as internal)
         internal static bool IsDoCraft;
@@ -66,6 +82,80 @@ namespace ChanceCraft
             armorSuccessUpgrade = Config.Bind("General", "ArmorSuccessUpgrade", armorSuccessChance.Value, new ConfigDescription("Chance to successfully upgrade armors (0.0 - 1.0)"));
             arrowSuccessUpgrade = Config.Bind("General", "ArrowSuccessUpgrade", arrowSuccessChance.Value, new ConfigDescription("Chance to successfully upgrade arrows (0.0 - 1.0)"));
 
+            // Bind each line under its own group so the config file is clear.
+            // The key names match the user's requested "increase craft percentage" and "item prefab".
+            line1_increase = Config.Bind(
+                "ChanceCraft.Line1",
+                "increase craft percentage",
+                0.05f,
+                new ConfigDescription("Line1: Increase craft percentage (0.05 = 5%). Range 0.0 - 1.0", new AcceptableValueRange<float>(0f, 1f))
+            );
+            line1_item = Config.Bind(
+                "ChanceCraft.Line1",
+                "item prefab",
+                "KnifeFlint",
+                new ConfigDescription("Line1: Valheim prefab name for the item (e.g. KnifeFlint). Leave empty to disable this line.")
+            );
+
+            line2_increase = Config.Bind(
+                "ChanceCraft.Line2",
+                "increase craft percentage",
+                0.1f,
+                new ConfigDescription("Line2: Increase craft percentage (0.1 = 10%).", new AcceptableValueRange<float>(0f, 1f))
+            );
+            line2_item = Config.Bind(
+                "ChanceCraft.Line2",
+                "item prefab",
+                string.Empty,
+                new ConfigDescription("Line2: Valheim prefab name for the item. Leave empty to disable this line.")
+            );
+
+            line3_increase = Config.Bind(
+                "ChanceCraft.Line3",
+                "increase craft percentage",
+                0.15f,
+                new ConfigDescription("Line3: Increase craft percentage (0.15 = 15%).", new AcceptableValueRange<float>(0f, 1f))
+            );
+            line3_item = Config.Bind(
+                "ChanceCraft.Line3",
+                "item prefab",
+                string.Empty,
+                new ConfigDescription("Line3: Valheim prefab name for the item. Leave empty to disable this line.")
+            );
+
+            line4_increase = Config.Bind(
+                "ChanceCraft.Line4",
+                "increase craft percentage",
+                0.2f,
+                new ConfigDescription("Line4: Increase craft percentage (0.2 = 20%).", new AcceptableValueRange<float>(0f, 1f))
+            );
+            line4_item = Config.Bind(
+                "ChanceCraft.Line4",
+                "item prefab",
+                string.Empty,
+                new ConfigDescription("Line4: Valheim prefab name for the item. Leave empty to disable this line.")
+            );
+
+            line5_increase = Config.Bind(
+                "ChanceCraft.Line5",
+                "increase craft percentage",
+                0.3f,
+                new ConfigDescription("Line5: Increase craft percentage (0.3 = 30%).", new AcceptableValueRange<float>(0f, 1f))
+            );
+            line5_item = Config.Bind(
+                "ChanceCraft.Line5",
+                "item prefab",
+                string.Empty,
+                new ConfigDescription("Line5: Valheim prefab name for the item. Leave empty to disable this line.")
+            );
+
+            // Example: log current config at startup
+            Logger.LogInfo("ChanceCraft configured lines:");
+            foreach (var line in GetConfiguredLines())
+            {
+                Logger.LogInfo($"- prefab='{line.ItemPrefab ?? "<empty>"}' increase={line.IncreaseCraftPercentage} active={line.IsActive}");
+            }
+
             LogInfo($"ChanceCraft loaded: craft weapon={weaponSuccessChance.Value}, armor={armorSuccessChance.Value}, arrow={arrowSuccessChance.Value}; upgrade weapon={weaponSuccessUpgrade.Value}, armor={armorSuccessUpgrade.Value}, arrow={arrowSuccessUpgrade.Value}");
             Game.isModded = true;
         }
@@ -92,7 +182,75 @@ namespace ChanceCraft
             if (cond) LogInfo(msg);
         }
 
+        private void TryValidatePrefabs()
+        {
+            try
+            {
+                if (ZNetScene.instance == null) return;
+                foreach (var line in GetConfiguredLines().Where(l => l.IsActive))
+                {
+                    var pf = ZNetScene.instance.GetPrefab(line.ItemPrefab);
+                    if (pf == null)
+                    {
+                        Logger.LogWarning($"ChanceCraft: configured prefab '{line.ItemPrefab}' not found in ZNetScene. This line will not match at runtime.");
+                    }
+                }
+            }
+            catch
+            {
+                // If ZNetScene isn't available at Awake, skip validation silently.
+            }
+        }
+
         #endregion
+
+        // A simple DTO to represent a configured line
+        public class ChanceCraftLine
+        {
+            public float IncreaseCraftPercentage;
+            public string ItemPrefab;
+            public bool IsActive => !string.IsNullOrWhiteSpace(ItemPrefab);
+        }
+
+        // Returns the configured lines in order (line1..line5)
+        public List<ChanceCraftLine> GetConfiguredLines()
+        {
+            return new List<ChanceCraftLine>
+        {
+            new ChanceCraftLine { IncreaseCraftPercentage = line1_increase.Value, ItemPrefab = line1_item.Value },
+            new ChanceCraftLine { IncreaseCraftPercentage = line2_increase.Value, ItemPrefab = line2_item.Value },
+            new ChanceCraftLine { IncreaseCraftPercentage = line3_increase.Value, ItemPrefab = line3_item.Value },
+            new ChanceCraftLine { IncreaseCraftPercentage = line4_increase.Value, ItemPrefab = line4_item.Value },
+            new ChanceCraftLine { IncreaseCraftPercentage = line5_increase.Value, ItemPrefab = line5_item.Value },
+        };
+        }
+
+        // Computes total extra chance for a given crafted prefab name by summing all matching active lines.
+        // Returns value in range [0, 1].
+        public float GetAdditionalChanceForPrefab(string craftedPrefab)
+        {
+            if (string.IsNullOrWhiteSpace(craftedPrefab)) return 0f;
+
+            float sum = 0f;
+            foreach (var line in GetConfiguredLines())
+            {
+                if (!line.IsActive) continue;
+                // exact match on prefab name (case-sensitive to match Valheim prefab naming)
+                if (line.ItemPrefab == craftedPrefab)
+                {
+                    sum += line.IncreaseCraftPercentage;
+                }
+            }
+            // clamp to 1.0 max
+            return Mathf.Clamp01(sum);
+        }
+
+        public float ApplyExtraChanceToBase(string craftedPrefab, float baseChance)
+        {
+            float extra = GetAdditionalChanceForPrefab(craftedPrefab);
+            float result = baseChance + extra;
+            return Mathf.Clamp01(result);
+        }
 
         #region InventoryGui.DoCrafting patch (kept as-is but referencing helpers)
 
@@ -663,17 +821,46 @@ namespace ChanceCraft
 
                         if (validReqs.Count <= 1) return;
 
-                        var itemType = selectedRecipe.m_item?.m_itemData?.m_shared?.m_itemType;
-                        bool isEligible =
-                            itemType == ItemDrop.ItemData.ItemType.OneHandedWeapon ||
-                            itemType == ItemDrop.ItemData.ItemType.TwoHandedWeapon ||
-                            itemType == ItemDrop.ItemData.ItemType.Bow ||
-                            itemType == ItemDrop.ItemData.ItemType.TwoHandedWeaponLeft ||
-                            itemType == ItemDrop.ItemData.ItemType.Shield ||
-                            itemType == ItemDrop.ItemData.ItemType.Helmet ||
-                            itemType == ItemDrop.ItemData.ItemType.Chest ||
-                            itemType == ItemDrop.ItemData.ItemType.Legs ||
-                            itemType == ItemDrop.ItemData.ItemType.Ammo;
+                        string prefabName = TryGetPrefabNameFromInventoryGui(__instance);
+                        ItemDrop.ItemData.ItemType? itemType = TryGetItemTypeFromInventoryGui(__instance);
+
+                        // original eligibility by item type (if we could determine itemType)
+                        bool isEligibleByType = false;
+                        if (itemType.HasValue)
+                        {
+                            var t = itemType.Value;
+                            isEligibleByType =
+                                t == ItemDrop.ItemData.ItemType.OneHandedWeapon ||
+                                t == ItemDrop.ItemData.ItemType.TwoHandedWeapon ||
+                                t == ItemDrop.ItemData.ItemType.Bow ||
+                                t == ItemDrop.ItemData.ItemType.TwoHandedWeaponLeft ||
+                                t == ItemDrop.ItemData.ItemType.Shield ||
+                                t == ItemDrop.ItemData.ItemType.Helmet ||
+                                t == ItemDrop.ItemData.ItemType.Chest ||
+                                t == ItemDrop.ItemData.ItemType.Legs ||
+                                t == ItemDrop.ItemData.ItemType.Ammo;
+                        }
+
+                        // If not eligible by type, explicitly check each configured prefab line (line1..line5).
+                        bool isEligible = isEligibleByType;
+                        if (!isEligible)
+                        {
+                            var plugin = BepInEx.Bootstrap.Chainloader.ManagerObject.GetComponent<ChanceCraft>();
+                            if (plugin != null && !string.IsNullOrWhiteSpace(prefabName))
+                            {
+                                // Explicit per-line comparison (case-sensitive to match Valheim prefabs)
+                                foreach (var line in plugin.GetConfiguredLines())
+                                {
+                                    if (!line.IsActive) continue;
+                                    if (line.ItemPrefab == prefabName)
+                                    {
+                                        isEligible = true;
+                                        plugin.Logger.LogDebug($"ChanceCraft: prefab '{prefabName}' matched config line with increase {line.IncreaseCraftPercentage}");
+                                        break;
+                                    }
+                                }
+                            }
+                        }
 
                         if (!isEligible) return;
 
@@ -901,6 +1088,325 @@ namespace ChanceCraft
 
         #endregion
 
+        // Try to find a prefab name from InventoryGui instance by searching fields/properties for GameObject or ItemDrop references.
+        private static string TryGetPrefabNameFromInventoryGui(InventoryGui gui)
+        {
+            if (gui == null) return null;
+
+            // 1) Check common named fields/properties first (faster, if present)
+            var quickNames = new[] { "m_selectedItem", "m_selected", "m_selectedPiece", "m_craftPrefab", "m_currentItem", "m_item" };
+            foreach (var name in quickNames)
+            {
+                var fi = GetField(gui.GetType(), name);
+                if (fi != null)
+                {
+                    var val = fi.GetValue(gui);
+                    var nameFromVal = ExtractPrefabNameFromObject(val);
+                    if (!string.IsNullOrWhiteSpace(nameFromVal)) return nameFromVal;
+                }
+                var pi = GetProperty(gui.GetType(), name);
+                if (pi != null)
+                {
+                    var val = pi.GetValue(gui);
+                    var nameFromVal = ExtractPrefabNameFromObject(val);
+                    if (!string.IsNullOrWhiteSpace(nameFromVal)) return nameFromVal;
+                }
+            }
+
+            // 2) Search all fields/properties for a GameObject or ItemDrop or item data object and try to extract prefab name.
+            // Search fields
+            var fields = gui.GetType().GetFields(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+            foreach (var f in fields)
+            {
+                try
+                {
+                    var val = f.GetValue(gui);
+                    var nameFromVal = ExtractPrefabNameFromObject(val);
+                    if (!string.IsNullOrWhiteSpace(nameFromVal)) return nameFromVal;
+                }
+                catch { /* best-effort */ }
+            }
+
+            // Search properties
+            var props = gui.GetType().GetProperties(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+            foreach (var p in props)
+            {
+                try
+                {
+                    if (p.GetIndexParameters().Length > 0) continue;
+                    var val = p.GetValue(gui);
+                    var nameFromVal = ExtractPrefabNameFromObject(val);
+                    if (!string.IsNullOrWhiteSpace(nameFromVal)) return nameFromVal;
+                }
+                catch { /* best-effort */ }
+            }
+
+            return null;
+        }
+
+        // Try to get ItemType from InventoryGui (best-effort via reflection).
+        private static ItemDrop.ItemData.ItemType? TryGetItemTypeFromInventoryGui(InventoryGui gui)
+        {
+            if (gui == null) return null;
+
+            // Try to locate an ItemDrop.ItemData object in fields/properties
+            var fields = gui.GetType().GetFields(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+            foreach (var f in fields)
+            {
+                try
+                {
+                    var val = f.GetValue(gui);
+                    var itemType = ExtractItemTypeFromObject(val);
+                    if (itemType.HasValue) return itemType;
+                }
+                catch { }
+            }
+
+            var props = gui.GetType().GetProperties(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+            foreach (var p in props)
+            {
+                try
+                {
+                    if (p.GetIndexParameters().Length > 0) continue;
+                    var val = p.GetValue(gui);
+                    var itemType = ExtractItemTypeFromObject(val);
+                    if (itemType.HasValue) return itemType;
+                }
+                catch { }
+            }
+
+            return null;
+        }
+
+        // Extract prefab name from a candidate object (GameObject, ItemDrop, ItemData, strings).
+        private static string ExtractPrefabNameFromObject(object obj)
+        {
+            if (obj == null) return null;
+
+            // Direct GameObject
+            if (obj is GameObject go)
+            {
+                return go.name.Replace("(Clone)", "");
+            }
+
+            // If object has a 'gameObject' property
+            var goProp = obj.GetType().GetProperty("gameObject", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+            if (goProp != null)
+            {
+                try
+                {
+                    var goVal = goProp.GetValue(obj) as GameObject;
+                    if (goVal != null) return goVal.name.Replace("(Clone)", "");
+                }
+                catch { }
+            }
+
+            // If object has a field or property 'm_dropPrefab' or 'm_prefab' or 'm_shared' -> m_dropPrefab
+            var dropPrefabField = obj.GetType().GetField("m_dropPrefab", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+            if (dropPrefabField != null)
+            {
+                try
+                {
+                    var pf = dropPrefabField.GetValue(obj) as GameObject;
+                    if (pf != null) return pf.name.Replace("(Clone)", "");
+                }
+                catch { }
+            }
+
+            var dropPrefabProp = obj.GetType().GetProperty("m_dropPrefab", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+            if (dropPrefabProp != null)
+            {
+                try
+                {
+                    var pf = dropPrefabProp.GetValue(obj) as GameObject;
+                    if (pf != null) return pf.name.Replace("(Clone)", "");
+                }
+                catch { }
+            }
+
+            // If object is ItemDrop (has field 'm_itemData' or property 'm_itemData') try to dig deeper.
+            var itemDataField = obj.GetType().GetField("m_itemData", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+            if (itemDataField != null)
+            {
+                try
+                {
+                    var itemData = itemDataField.GetValue(obj);
+                    if (itemData != null)
+                    {
+                        // try shared drop prefab
+                        var sharedDropField = itemData.GetType().GetField("m_dropPrefab", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                        if (sharedDropField != null)
+                        {
+                            var pf = sharedDropField.GetValue(itemData) as GameObject;
+                            if (pf != null) return pf.name.Replace("(Clone)", "");
+                        }
+
+                        var sharedProp = itemData.GetType().GetProperty("m_dropPrefab", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                        if (sharedProp != null)
+                        {
+                            var pf = sharedProp.GetValue(itemData) as GameObject;
+                            if (pf != null) return pf.name.Replace("(Clone)", "");
+                        }
+                    }
+                }
+                catch { }
+            }
+
+            // If object has a 'name' field or property
+            var nameField = obj.GetType().GetField("name", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+            if (nameField != null)
+            {
+                try
+                {
+                    var n = nameField.GetValue(obj) as string;
+                    if (!string.IsNullOrWhiteSpace(n)) return n.Replace("(Clone)", "");
+                }
+                catch { }
+            }
+            var nameProp = obj.GetType().GetProperty("name", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+            if (nameProp != null)
+            {
+                try
+                {
+                    var n = nameProp.GetValue(obj) as string;
+                    if (!string.IsNullOrWhiteSpace(n)) return n.Replace("(Clone)", "");
+                }
+                catch { }
+            }
+
+            return null;
+        }
+
+        // Extract ItemType from a candidate object (ItemDrop, ItemData, Shared, etc.)
+        private static ItemDrop.ItemData.ItemType? ExtractItemTypeFromObject(object obj)
+        {
+            if (obj == null) return null;
+
+            // If object itself is ItemDrop.ItemData
+            if (obj.GetType().Name == "ItemDrop" || obj.GetType().Name == "ItemDrop+ItemData" || obj.GetType().Name == "ItemDrop.ItemData")
+            {
+                // Try common patterns to get shared -> item type
+                var sharedField = obj.GetType().GetField("m_shared", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                if (sharedField != null)
+                {
+                    try
+                    {
+                        var shared = sharedField.GetValue(obj);
+                        if (shared != null)
+                        {
+                            var itemTypeField = shared.GetType().GetField("m_itemType", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                            if (itemTypeField != null)
+                            {
+                                var val = itemTypeField.GetValue(shared);
+                                if (val is ItemDrop.ItemData.ItemType it) return it;
+                            }
+
+                            var itemTypeProp = shared.GetType().GetProperty("m_itemType", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                            if (itemTypeProp != null)
+                            {
+                                var val = itemTypeProp.GetValue(shared);
+                                if (val is ItemDrop.ItemData.ItemType it2) return it2;
+                            }
+                        }
+                    }
+                    catch { }
+                }
+
+                // Try a property or field directly on the item data for item type
+                var itemTypeFieldDirect = obj.GetType().GetField("m_itemType", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                if (itemTypeFieldDirect != null)
+                {
+                    try
+                    {
+                        var val = itemTypeFieldDirect.GetValue(obj);
+                        if (val is ItemDrop.ItemData.ItemType it) return it;
+                    }
+                    catch { }
+                }
+
+                var itemTypePropDirect = obj.GetType().GetProperty("m_itemType", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                if (itemTypePropDirect != null)
+                {
+                    try
+                    {
+                        var val = itemTypePropDirect.GetValue(obj);
+                        if (val is ItemDrop.ItemData.ItemType it) return it;
+                    }
+                    catch { }
+                }
+            }
+
+            // If object is GameObject, try to get ItemDrop component and then item data
+            if (obj is GameObject go)
+            {
+                try
+                {
+                    var itemDrop = go.GetComponent<ItemDrop>();
+                    if (itemDrop != null)
+                    {
+                        var itemDataProp = itemDrop.GetType().GetProperty("m_itemData", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                        if (itemDataProp != null)
+                        {
+                            var itemData = itemDataProp.GetValue(itemDrop);
+                            var res = ExtractItemTypeFromObject(itemData);
+                            if (res.HasValue) return res;
+                        }
+                    }
+                }
+                catch { }
+            }
+
+            // If object has a field/property 'm_itemData' or 'm_shared', try to dig in
+            var field = obj.GetType().GetField("m_itemData", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+            if (field != null)
+            {
+                try
+                {
+                    var id = field.GetValue(obj);
+                    var res = ExtractItemTypeFromObject(id);
+                    if (res.HasValue) return res;
+                }
+                catch { }
+            }
+
+            var prop = obj.GetType().GetProperty("m_itemData", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+            if (prop != null)
+            {
+                try
+                {
+                    var id = prop.GetValue(obj);
+                    var res = ExtractItemTypeFromObject(id);
+                    if (res.HasValue) return res;
+                }
+                catch { }
+            }
+
+            return null;
+        }
+
+        // Helpers to get private fields/properties
+        private static FieldInfo GetField(Type t, string name)
+        {
+            while (t != null)
+            {
+                var f = t.GetField(name, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                if (f != null) return f;
+                t = t.BaseType;
+            }
+            return null;
+        }
+
+        private static PropertyInfo GetProperty(Type t, string name)
+        {
+            while (t != null)
+            {
+                var p = t.GetProperty(name, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                if (p != null) return p;
+                t = t.BaseType;
+            }
+            return null;
+        }
+
         private static void ClearCapturedUpgradeGui()
         {
             try
@@ -941,17 +1447,261 @@ namespace ChanceCraft
             if (selectedRecipe == null || Player.m_localPlayer == null) return null;
 
             var itemType = selectedRecipe.m_item?.m_itemData?.m_shared?.m_itemType;
-            if (itemType != ItemDrop.ItemData.ItemType.OneHandedWeapon &&
-                itemType != ItemDrop.ItemData.ItemType.TwoHandedWeapon &&
-                itemType != ItemDrop.ItemData.ItemType.Bow &&
-                itemType != ItemDrop.ItemData.ItemType.TwoHandedWeaponLeft &&
-                itemType != ItemDrop.ItemData.ItemType.Shield &&
-                itemType != ItemDrop.ItemData.ItemType.Helmet &&
-                itemType != ItemDrop.ItemData.ItemType.Chest &&
-                itemType != ItemDrop.ItemData.ItemType.Legs &&
-                itemType != ItemDrop.ItemData.ItemType.Ammo)
+            bool typeAllowed =
+                itemType == ItemDrop.ItemData.ItemType.OneHandedWeapon ||
+                itemType == ItemDrop.ItemData.ItemType.TwoHandedWeapon ||
+                itemType == ItemDrop.ItemData.ItemType.Bow ||
+                itemType == ItemDrop.ItemData.ItemType.TwoHandedWeaponLeft ||
+                itemType == ItemDrop.ItemData.ItemType.Shield ||
+                itemType == ItemDrop.ItemData.ItemType.Helmet ||
+                itemType == ItemDrop.ItemData.ItemType.Chest ||
+                itemType == ItemDrop.ItemData.ItemType.Legs ||
+                itemType == ItemDrop.ItemData.ItemType.Ammo;
+
+            // If the type is not allowed, we now check the player's inventory for any items matching configured prefabs (line1..line5).
+            // For each matched config line we:
+            //  - add its percentage to totalModifiedPercentage
+            //  - destroy 1 instance of the matched item in the player's inventory
+            float totalModifiedPercentage = 0f;
+            bool foundAnyConfiguredMatch = false;
+
+            if (!typeAllowed)
+            {
+                var plugin = BepInEx.Bootstrap.Chainloader.ManagerObject.GetComponent<ChanceCraft>();
+                if (plugin == null) return null;
+
+                var playerInv = Player.m_localPlayer;
+                var inv = playerInv?.GetInventory();
+                if (inv != null)
+                {
+                    // Get enumerable of inventory items (best-effort): try GetAllItems(), otherwise try common fields.
+                    System.Collections.IEnumerable invItems = null;
+                    var getAll = inv.GetType().GetMethod("GetAllItems", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                    if (getAll != null)
+                    {
+                        try { invItems = (System.Collections.IEnumerable)getAll.Invoke(inv, null); } catch { invItems = null; }
+                    }
+
+                    if (invItems == null)
+                    {
+                        var fi = inv.GetType().GetField("m_inventory", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+                                 ?? inv.GetType().GetField("m_items", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                        if (fi != null)
+                        {
+                            try { invItems = fi.GetValue(inv) as System.Collections.IEnumerable; } catch { invItems = null; }
+                        }
+                    }
+
+                    if (invItems != null)
+                    {
+                        // Helper to extract prefab name from an inventory item (best-effort via reflection)
+                        Func<object, string> extractPrefabName = (obj) =>
+                        {
+                            if (obj == null) return null;
+                            try
+                            {
+                                // common pattern: ItemDrop.ItemData -> m_shared -> m_dropPrefab (GameObject)
+                                var t = obj.GetType();
+                                var sharedField = t.GetField("m_shared", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                                object shared = sharedField != null ? sharedField.GetValue(obj) : null;
+                                if (shared != null)
+                                {
+                                    var sharedType = shared.GetType();
+                                    var pfField = sharedType.GetField("m_dropPrefab", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                                    if (pfField != null)
+                                    {
+                                        var pf = pfField.GetValue(shared) as GameObject;
+                                        if (pf != null) return pf.name.Replace("(Clone)", "");
+                                    }
+                                    var pfProp = sharedType.GetProperty("m_dropPrefab", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                                    if (pfProp != null)
+                                    {
+                                        var pf = pfProp.GetValue(shared) as GameObject;
+                                        if (pf != null) return pf.name.Replace("(Clone)", "");
+                                    }
+                                }
+
+                                // fallback: try itemData.m_dropPrefab directly
+                                var pfField2 = t.GetField("m_dropPrefab", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                                if (pfField2 != null)
+                                {
+                                    var pf = pfField2.GetValue(obj) as GameObject;
+                                    if (pf != null) return pf.name.Replace("(Clone)", "");
+                                }
+                                var pfProp2 = t.GetProperty("m_dropPrefab", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                                if (pfProp2 != null)
+                                {
+                                    var pf = pfProp2.GetValue(obj) as GameObject;
+                                    if (pf != null) return pf.name.Replace("(Clone)", "");
+                                }
+
+                                // fallback: if object has gameObject property
+                                var goProp = t.GetProperty("gameObject", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                                if (goProp != null)
+                                {
+                                    var go = goProp.GetValue(obj) as GameObject;
+                                    if (go != null) return go.name.Replace("(Clone)", "");
+                                }
+
+                                // last fallback: name field/property
+                                var nameField = t.GetField("name", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                                if (nameField != null)
+                                {
+                                    var n = nameField.GetValue(obj) as string;
+                                    if (!string.IsNullOrWhiteSpace(n)) return n.Replace("(Clone)", "");
+                                }
+                                var nameProp = t.GetProperty("name", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                                if (nameProp != null)
+                                {
+                                    var n = nameProp.GetValue(obj) as string;
+                                    if (!string.IsNullOrWhiteSpace(n)) return n.Replace("(Clone)", "");
+                                }
+                            }
+                            catch { /* best-effort */ }
+                            return null;
+                        };
+
+                        // Helper to remove 1 instance of a specific inventory item (best-effort via reflection).
+                        Action<object> removeOne = (invItemObj) =>
+                        {
+                            try
+                            {
+                                var itemTypeInv = invItemObj.GetType();
+
+                                // 1) Try Inventory.RemoveItem(ItemDrop.ItemData, int)
+                                var removeMethod = inv.GetType().GetMethod("RemoveItem", new Type[] { itemTypeInv, typeof(int) });
+                                if (removeMethod != null)
+                                {
+                                    try { removeMethod.Invoke(inv, new object[] { invItemObj, 1 }); return; } catch { }
+                                }
+
+                                // 2) Try Inventory.RemoveItem(string, int) - need display name from m_shared.m_name
+                                var sharedField = itemTypeInv.GetField("m_shared", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                                string displayName = null;
+                                if (sharedField != null)
+                                {
+                                    try
+                                    {
+                                        var shared = sharedField.GetValue(invItemObj);
+                                        if (shared != null)
+                                        {
+                                            var nameField = shared.GetType().GetField("m_name", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                                            if (nameField != null) displayName = nameField.GetValue(shared) as string;
+                                            if (string.IsNullOrWhiteSpace(displayName))
+                                            {
+                                                var nameProp = shared.GetType().GetProperty("m_name", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                                                if (nameProp != null) displayName = nameProp.GetValue(shared) as string;
+                                            }
+                                        }
+                                    }
+                                    catch { displayName = null; }
+                                }
+
+                                if (!string.IsNullOrWhiteSpace(displayName))
+                                {
+                                    var removeByName = inv.GetType().GetMethod("RemoveItem", new Type[] { typeof(string), typeof(int) });
+                                    if (removeByName != null)
+                                    {
+                                        try { removeByName.Invoke(inv, new object[] { displayName, 1 }); return; } catch { }
+                                    }
+                                }
+
+                                // 3) Try Inventory.RemoveItem(ItemDrop.ItemData) or similar variants
+                                var removeMethodSimple = inv.GetType().GetMethod("RemoveItem", new Type[] { itemTypeInv });
+                                if (removeMethodSimple != null)
+                                {
+                                    try { removeMethodSimple.Invoke(inv, new object[] { invItemObj }); return; } catch { }
+                                }
+
+                                // As a last resort, if item has a field/property "m_stack" and it's >1, decrement it; otherwise try to set to 0 (best-effort).
+                                var stackField = itemTypeInv.GetField("m_stack", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                                if (stackField != null)
+                                {
+                                    try
+                                    {
+                                        var stackVal = stackField.GetValue(invItemObj);
+                                        if (stackVal is int sv && sv > 1)
+                                        {
+                                            stackField.SetValue(invItemObj, sv - 1);
+                                            return;
+                                        }
+                                        else
+                                        {
+                                            // can't reliably remove, leave as-is
+                                        }
+                                    }
+                                    catch { }
+                                }
+                            }
+                            catch { /* best-effort */ }
+                        };
+
+                        // For each configured line, try to find any inventory item that matches that prefab and remove one.
+                        var configLines = plugin.GetConfiguredLines();
+                        foreach (var line in configLines)
+                        {
+                            if (line == null || !line.IsActive) continue;
+
+                            // Search inventory for an item matching line.ItemPrefab
+                            object matchedItemObj = null;
+                            foreach (var invObj in invItems)
+                            {
+                                if (invObj == null) continue;
+                                var invPrefabName = extractPrefabName(invObj);
+                                if (string.IsNullOrWhiteSpace(invPrefabName)) continue;
+                                if (invPrefabName == line.ItemPrefab)
+                                {
+                                    matchedItemObj = invObj;
+                                    break;
+                                }
+                            }
+
+                            if (matchedItemObj != null)
+                            {
+                                // accumulate percentage and remove one instance
+                                totalModifiedPercentage += line.IncreaseCraftPercentage;
+                                foundAnyConfiguredMatch = true;
+                                removeOne(matchedItemObj);
+                                plugin.Logger.LogDebug($"ChanceCraft: consumed 1 '{line.ItemPrefab}' from inventory for increase {line.IncreaseCraftPercentage}");
+                            }
+                        }
+                    } // end if invItems != null
+                } // end if inv != null
+            } // end if !typeAllowed
+
+            // If type not allowed and we found no configured matches in inventory, preserve original behavior -> skip
+            if (!typeAllowed && !foundAnyConfiguredMatch)
             {
                 return null;
+            }
+
+            // At this point either the item type is whitelisted OR we matched configured items in inventory.
+            // totalModifiedPercentage contains the sum of matched config lines (clamped to 1.0 if desired by caller).
+            // You can use ApplyExtraChanceToBase(selectedPrefabName, baseChance) elsewhere; here we only compute and consumed items.
+
+            // Optionally log final total (plugin likely available here)
+            try
+            {
+                var plugin = BepInEx.Bootstrap.Chainloader.ManagerObject.GetComponent<ChanceCraft>();
+                if (plugin != null && totalModifiedPercentage > 0f)
+                {
+                    plugin.Logger.LogInfo($"ChanceCraft: total modified percentage from inventory consumed items = {totalModifiedPercentage * 100f}%");
+                }
+            }
+            catch { /* ignore logging failures */ }
+
+            float percent = totalModifiedPercentage * 100f;
+            string text = $"<color=yellow>Crafting percentage increased by {percent:0.##}%</color>";
+
+            // Preferred: MessageHud
+            if (MessageHud.instance != null)
+            {
+                MessageHud.instance.ShowMessage(MessageHud.MessageType.Center, text);
+            }
+            // Fallback: Player message (if local player exists)
+            else if (Player.m_localPlayer != null)
+            {
+                Player.m_localPlayer.Message(MessageHud.MessageType.Center, text);
             }
 
             var player = Player.m_localPlayer;
@@ -980,6 +1730,8 @@ namespace ChanceCraft
                 craftChance = arrowSuccessChance.Value;
                 upgradeChance = arrowSuccessUpgrade.Value;
             }
+
+            craftChance = Mathf.Clamp01(craftChance + totalModifiedPercentage);
 
             int qualityLevel = selectedRecipe.m_item?.m_itemData?.m_quality ?? 1;
             float qualityScalePerLevel = 0.05f;
