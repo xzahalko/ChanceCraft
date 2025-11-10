@@ -1421,7 +1421,7 @@ namespace ChanceCraft
             try
             {
                 itemType = selectedRecipe.m_item?.m_itemData?.m_shared?.m_itemType;
-                LogDebugIf (VERBOSE_DEBUG, $"Extracted itemType = {(itemType.HasValue ? itemType.Value.ToString() : "<null>")}");
+                LogDebugIf(VERBOSE_DEBUG, $"Extracted itemType = {(itemType.HasValue ? itemType.Value.ToString() : "<null>")}");
             }
             catch (Exception ex)
             {
@@ -1429,7 +1429,8 @@ namespace ChanceCraft
                 itemType = null;
             }
 
-            bool typeAllowed =
+            // This boolean names the types that the plugin should affect (we apply failure chance to these types).
+            bool isEligibleType =
                 itemType == ItemDrop.ItemData.ItemType.OneHandedWeapon ||
                 itemType == ItemDrop.ItemData.ItemType.TwoHandedWeapon ||
                 itemType == ItemDrop.ItemData.ItemType.Bow ||
@@ -1440,266 +1441,266 @@ namespace ChanceCraft
                 itemType == ItemDrop.ItemData.ItemType.Legs ||
                 itemType == ItemDrop.ItemData.ItemType.Ammo;
 
-            LogDebugIf (VERBOSE_DEBUG, $"typeAllowed = {typeAllowed}");
+            LogDebugIf(VERBOSE_DEBUG, $"isEligibleType = {isEligibleType}");
 
-            // If the type is NOT allowed, we check the player's inventory for any items matching configured prefabs (line1..line5).
-            // For each matched config line we:
-            //  - add its percentage to totalModifiedPercentage
-            //  - destroy 1 instance of the matched item in the player's inventory
+            // If the crafted item is not one of the eligible types, this plugin does not apply.
+            if (!isEligibleType)
+            {
+                LogDebugIf(VERBOSE_DEBUG, "Item type is not eligible for ChanceCraft -> skipping plugin logic.");
+                return null;
+            }
+
+            // total extra chance accumulated from configured helper items found in player's inventory
             float totalModifiedPercentage = 0f;
             bool foundAnyConfiguredMatch = false;
 
             var plugin = BepInEx.Bootstrap.Chainloader.ManagerObject.GetComponent<ChanceCraft>();
 
-            // IMPORTANT FIX: original code executed the inventory-check branch when typeAllowed was true.
-            // We only want to check inventory and possibly consume configured items when typeAllowed == false.
-            if (typeAllowed)
+            // For eligible types, check player's inventory for configured helper prefabs and consume them (best-effort).
+            if (plugin == null)
             {
-                LogDebugIf (VERBOSE_DEBUG, "Item type is NOT whitelisted. Checking player inventory for configured prefabs to possibly increase chance.");
-
-                if (plugin == null)
+                LogWarning("ChanceCraft plugin instance not found (plugin == null). Can't access configured lines. Skipping inventory boost checks.");
+            }
+            else
+            {
+                var playerInv = Player.m_localPlayer;
+                if (playerInv == null)
                 {
-                    LogWarning("ChanceCraft plugin instance not found (plugin == null). Can't access configured lines. Aborting inventory checks.");
+                    LogWarning("Player.m_localPlayer is null; cannot check inventory.");
                 }
                 else
                 {
-                    var playerInv = Player.m_localPlayer;
-                    if (playerInv == null)
+                    var inv = playerInv.GetInventory();
+                    if (inv == null)
                     {
-                        LogWarning("Player.m_localPlayer is null; cannot check inventory.");
+                        LogWarning("Player inventory (GetInventory()) returned null.");
                     }
                     else
                     {
-                        var inv = playerInv.GetInventory();
-                        if (inv == null)
+                        // Try to obtain inventory items via GetAllItems() (disambiguate overloads)
+                        System.Collections.IEnumerable invItems = null;
+                        var getAll = inv.GetType().GetMethod("GetAllItems", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, null, Type.EmptyTypes, null);
+                        if (getAll != null)
                         {
-                            LogWarning("Player inventory (GetInventory()) returned null.");
+                            try
+                            {
+                                invItems = (System.Collections.IEnumerable)getAll.Invoke(inv, null);
+                                LogDebugIf(VERBOSE_DEBUG, "Obtained inventory items via GetAllItems().");
+                            }
+                            catch (Exception ex)
+                            {
+                                LogWarning("GetAllItems() invocation failed: " + ex);
+                                invItems = null;
+                            }
                         }
-                        else
+
+                        // fallback: try common inventory fields
+                        if (invItems == null)
                         {
-                            // Get enumerable of inventory items (best-effort): try GetAllItems(), otherwise try common fields.
-                            System.Collections.IEnumerable invItems = null;
-                            var getAll = inv.GetType().GetMethod("GetAllItems", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-                            if (getAll != null)
+                            var fi = inv.GetType().GetField("m_inventory", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+                                     ?? inv.GetType().GetField("m_items", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                            if (fi != null)
                             {
                                 try
                                 {
-                                    invItems = (System.Collections.IEnumerable)getAll.Invoke(inv, null);
-                                    LogDebugIf (VERBOSE_DEBUG, "Obtained inventory items via GetAllItems().");
+                                    invItems = fi.GetValue(inv) as System.Collections.IEnumerable;
+                                    LogDebugIf(VERBOSE_DEBUG, $"Obtained inventory items via field '{fi.Name}'.");
                                 }
                                 catch (Exception ex)
                                 {
-                                    LogWarning("GetAllItems() invocation failed: " + ex);
+                                    LogWarning("Accessing inventory field failed: " + ex);
                                     invItems = null;
                                 }
                             }
-
-                            if (invItems == null)
-                            {
-                                var fi = inv.GetType().GetField("m_inventory", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
-                                         ?? inv.GetType().GetField("m_items", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-                                if (fi != null)
-                                {
-                                    try
-                                    {
-                                        invItems = fi.GetValue(inv) as System.Collections.IEnumerable;
-                                        LogDebugIf (VERBOSE_DEBUG, $"Obtained inventory items via field '{fi.Name}'.");
-                                    }
-                                    catch (Exception ex)
-                                    {
-                                        LogWarning("Accessing inventory field failed: " + ex);
-                                        invItems = null;
-                                    }
-                                }
-                                else
-                                {
-                                    LogDebugIf (VERBOSE_DEBUG, "No inventory field found (m_inventory / m_items).");
-                                }
-                            }
-
-                            if (invItems == null)
-                            {
-                                LogWarning("Failed to enumerate inventory items (invItems == null).");
-                            }
                             else
                             {
-                                // Helper to extract prefab name from an inventory item (best-effort via reflection)
-                                Func<object, string> extractPrefabName = (obj) =>
-                                {
-                                    if (obj == null) return null;
-                                    try
-                                    {
-                                        var t = obj.GetType();
-                                        var sharedField = t.GetField("m_shared", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-                                        object shared = sharedField != null ? sharedField.GetValue(obj) : null;
-                                        if (shared != null)
-                                        {
-                                            var sharedType = shared.GetType();
-                                            var pfField = sharedType.GetField("m_dropPrefab", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-                                            if (pfField != null)
-                                            {
-                                                var pf = pfField.GetValue(shared) as GameObject;
-                                                if (pf != null) return pf.name.Replace("(Clone)", "");
-                                            }
-                                            var pfProp = sharedType.GetProperty("m_dropPrefab", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-                                            if (pfProp != null)
-                                            {
-                                                var pf = pfProp.GetValue(shared) as GameObject;
-                                                if (pf != null) return pf.name.Replace("(Clone)", "");
-                                            }
-                                        }
+                                LogDebugIf(VERBOSE_DEBUG, "No inventory field found (m_inventory / m_items).");
+                            }
+                        }
 
-                                        var pfField2 = t.GetField("m_dropPrefab", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-                                        if (pfField2 != null)
+                        if (invItems == null)
+                        {
+                            LogWarning("Failed to enumerate inventory items (invItems == null).");
+                        }
+                        else
+                        {
+                            // helper: best-effort extract prefab name from inventory object
+                            Func<object, string> extractPrefabName = (obj) =>
+                            {
+                                if (obj == null) return null;
+                                try
+                                {
+                                    var t = obj.GetType();
+                                    var sharedField = t.GetField("m_shared", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                                    object shared = sharedField != null ? sharedField.GetValue(obj) : null;
+                                    if (shared != null)
+                                    {
+                                        var sharedType = shared.GetType();
+                                        var pfField = sharedType.GetField("m_dropPrefab", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                                        if (pfField != null)
                                         {
-                                            var pf = pfField2.GetValue(obj) as GameObject;
+                                            var pf = pfField.GetValue(shared) as GameObject;
                                             if (pf != null) return pf.name.Replace("(Clone)", "");
                                         }
-                                        var pfProp2 = t.GetProperty("m_dropPrefab", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-                                        if (pfProp2 != null)
+                                        var pfProp = sharedType.GetProperty("m_dropPrefab", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                                        if (pfProp != null)
                                         {
-                                            var pf = pfProp2.GetValue(obj) as GameObject;
+                                            var pf = pfProp.GetValue(shared) as GameObject;
                                             if (pf != null) return pf.name.Replace("(Clone)", "");
                                         }
-
-                                        var goProp = t.GetProperty("gameObject", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-                                        if (goProp != null)
-                                        {
-                                            var go = goProp.GetValue(obj) as GameObject;
-                                            if (go != null) return go.name.Replace("(Clone)", "");
-                                        }
-
-                                        var nameField = t.GetField("name", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-                                        if (nameField != null)
-                                        {
-                                            var n = nameField.GetValue(obj) as string;
-                                            if (!string.IsNullOrWhiteSpace(n)) return n.Replace("(Clone)", "");
-                                        }
-                                        var nameProp = t.GetProperty("name", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-                                        if (nameProp != null)
-                                        {
-                                            var n = nameProp.GetValue(obj) as string;
-                                            if (!string.IsNullOrWhiteSpace(n)) return n.Replace("(Clone)", "");
-                                        }
                                     }
-                                    catch (Exception ex)
+
+                                    var pfField2 = t.GetField("m_dropPrefab", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                                    if (pfField2 != null)
                                     {
-                                        LogDebugIf (VERBOSE_DEBUG, "extractPrefabName exception: " + ex);
+                                        var pf = pfField2.GetValue(obj) as GameObject;
+                                        if (pf != null) return pf.name.Replace("(Clone)", "");
                                     }
-                                    return null;
-                                };
+                                    var pfProp2 = t.GetProperty("m_dropPrefab", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                                    if (pfProp2 != null)
+                                    {
+                                        var pf = pfProp2.GetValue(obj) as GameObject;
+                                        if (pf != null) return pf.name.Replace("(Clone)", "");
+                                    }
 
-                                // Helper to remove 1 instance of a specific inventory item (best-effort via reflection).
-                                Action<object> removeOne = (invItemObj) =>
+                                    var goProp = t.GetProperty("gameObject", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                                    if (goProp != null)
+                                    {
+                                        var go = goProp.GetValue(obj) as GameObject;
+                                        if (go != null) return go.name.Replace("(Clone)", "");
+                                    }
+
+                                    var nameField = t.GetField("name", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                                    if (nameField != null)
+                                    {
+                                        var n = nameField.GetValue(obj) as string;
+                                        if (!string.IsNullOrWhiteSpace(n)) return n.Replace("(Clone)", "");
+                                    }
+                                    var nameProp = t.GetProperty("name", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                                    if (nameProp != null)
+                                    {
+                                        var n = nameProp.GetValue(obj) as string;
+                                        if (!string.IsNullOrWhiteSpace(n)) return n.Replace("(Clone)", "");
+                                    }
+                                }
+                                catch (Exception ex)
                                 {
-                                    try
+                                    LogDebugIf(VERBOSE_DEBUG, "extractPrefabName exception: " + ex);
+                                }
+                                return null;
+                            };
+
+                            // helper to remove one instance (best-effort) from the player's inventory
+                            Action<object> removeOne = (invItemObj) =>
+                            {
+                                try
+                                {
+                                    var itemTypeInv = invItemObj.GetType();
+
+                                    // 1) Inventory.RemoveItem(itemData, int)
+                                    var removeMethod = inv.GetType().GetMethod("RemoveItem", new Type[] { itemTypeInv, typeof(int) });
+                                    if (removeMethod != null)
                                     {
-                                        var itemTypeInv = invItemObj.GetType();
-
-                                        // 1) Try Inventory.RemoveItem(ItemDrop.ItemData, int)
-                                        var removeMethod = inv.GetType().GetMethod("RemoveItem", new Type[] { itemTypeInv, typeof(int) });
-                                        if (removeMethod != null)
+                                        try
                                         {
-                                            try
-                                            {
-                                                removeMethod.Invoke(inv, new object[] { invItemObj, 1 });
-                                                LogDebugIf (VERBOSE_DEBUG, "Removed 1 item (RemoveItem(itemData, int) used).");
-                                                return;
-                                            }
-                                            catch (Exception ex) { LogDebugIf (VERBOSE_DEBUG, "RemoveItem(itemData, int) failed: " + ex); }
+                                            removeMethod.Invoke(inv, new object[] { invItemObj, 1 });
+                                            LogDebugIf(VERBOSE_DEBUG, "Removed 1 item (RemoveItem(itemData, int) used).");
+                                            return;
                                         }
-
-                                        // 2) Try Inventory.RemoveItem(string, int) - need display name from m_shared.m_name
-                                        var sharedField = itemTypeInv.GetField("m_shared", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-                                        string displayName = null;
-                                        if (sharedField != null)
-                                        {
-                                            try
-                                            {
-                                                var shared = sharedField.GetValue(invItemObj);
-                                                if (shared != null)
-                                                {
-                                                    var nameField = shared.GetType().GetField("m_name", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-                                                    if (nameField != null) displayName = nameField.GetValue(shared) as string;
-                                                    if (string.IsNullOrWhiteSpace(displayName))
-                                                    {
-                                                        var nameProp = shared.GetType().GetProperty("m_name", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-                                                        if (nameProp != null) displayName = nameProp.GetValue(shared) as string;
-                                                    }
-                                                }
-                                            }
-                                            catch (Exception ex) { LogDebugIf (VERBOSE_DEBUG, "Failed to read shared.m_name: " + ex); displayName = null; }
-                                        }
-
-                                        if (!string.IsNullOrWhiteSpace(displayName))
-                                        {
-                                            var removeByName = inv.GetType().GetMethod("RemoveItem", new Type[] { typeof(string), typeof(int) });
-                                            if (removeByName != null)
-                                            {
-                                                try
-                                                {
-                                                    removeByName.Invoke(inv, new object[] { displayName, 1 });
-                                                    LogDebugIf (VERBOSE_DEBUG, $"Removed 1 item by name ('{displayName}') via RemoveItem(string, int).");
-                                                    return;
-                                                }
-                                                catch (Exception ex) { LogDebugIf (VERBOSE_DEBUG, "RemoveItem(string,int) failed: " + ex); }
-                                            }
-                                        }
-
-                                        // 3) Try Inventory.RemoveItem(ItemDrop.ItemData) or similar variants
-                                        var removeMethodSimple = inv.GetType().GetMethod("RemoveItem", new Type[] { itemTypeInv });
-                                        if (removeMethodSimple != null)
-                                        {
-                                            try
-                                            {
-                                                removeMethodSimple.Invoke(inv, new object[] { invItemObj });
-                                                LogDebugIf (VERBOSE_DEBUG, "Removed 1 item (RemoveItem(itemData) used).");
-                                                return;
-                                            }
-                                            catch (Exception ex) { LogDebugIf (VERBOSE_DEBUG, "RemoveItem(itemData) failed: " + ex); }
-                                        }
-
-                                        // Fallback: decrement stack field if present
-                                        var stackField = itemTypeInv.GetField("m_stack", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-                                        if (stackField != null)
-                                        {
-                                            try
-                                            {
-                                                var stackVal = stackField.GetValue(invItemObj);
-                                                if (stackVal is int sv && sv > 1)
-                                                {
-                                                    stackField.SetValue(invItemObj, sv - 1);
-                                                    LogDebugIf (VERBOSE_DEBUG, "Decremented m_stack by 1 as a fallback removal.");
-                                                    return;
-                                                }
-                                                else
-                                                {
-                                                    LogDebugIf (VERBOSE_DEBUG, "m_stack present but not >1; cannot decrement to remove one reliably.");
-                                                }
-                                            }
-                                            catch (Exception ex) { LogDebugIf (VERBOSE_DEBUG, "m_stack decrement failed: " + ex); }
-                                        }
-
-                                        LogWarning("Could not remove item via any known method; item may remain in inventory.");
+                                        catch (Exception ex) { LogDebugIf(VERBOSE_DEBUG, "RemoveItem(itemData, int) failed: " + ex); }
                                     }
-                                    catch (Exception ex) { LogDebugIf (VERBOSE_DEBUG, "removeOne outer exception: " + ex); }
-                                };
 
-                                // For each configured line, try to find any inventory item that matches that prefab and remove one.
-                                var configLines = plugin.GetConfiguredLines();
-                                LogDebugIf(VERBOSE_DEBUG, $"Configured lines count: {(configLines == null ? configLines.ToString() : "<null>")}");
+                                    // 2) Inventory.RemoveItem(string, int)
+                                    var sharedField = itemTypeInv.GetField("m_shared", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                                    string displayName = null;
+                                    if (sharedField != null)
+                                    {
+                                        try
+                                        {
+                                            var shared = sharedField.GetValue(invItemObj);
+                                            if (shared != null)
+                                            {
+                                                var nameField = shared.GetType().GetField("m_name", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                                                if (nameField != null) displayName = nameField.GetValue(shared) as string;
+                                                if (string.IsNullOrWhiteSpace(displayName))
+                                                {
+                                                    var nameProp = shared.GetType().GetProperty("m_name", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                                                    if (nameProp != null) displayName = nameProp.GetValue(shared) as string;
+                                                }
+                                            }
+                                        }
+                                        catch (Exception ex) { LogDebugIf(VERBOSE_DEBUG, "Failed to read shared.m_name: " + ex); displayName = null; }
+                                    }
 
+                                    if (!string.IsNullOrWhiteSpace(displayName))
+                                    {
+                                        var removeByName = inv.GetType().GetMethod("RemoveItem", new Type[] { typeof(string), typeof(int) });
+                                        if (removeByName != null)
+                                        {
+                                            try
+                                            {
+                                                removeByName.Invoke(inv, new object[] { displayName, 1 });
+                                                LogDebugIf(VERBOSE_DEBUG, $"Removed 1 item by name ('{displayName}') via RemoveItem(string, int).");
+                                                return;
+                                            }
+                                            catch (Exception ex) { LogDebugIf(VERBOSE_DEBUG, "RemoveItem(string,int) failed: " + ex); }
+                                        }
+                                    }
+
+                                    // 3) Inventory.RemoveItem(itemData)
+                                    var removeMethodSimple = inv.GetType().GetMethod("RemoveItem", new Type[] { itemTypeInv });
+                                    if (removeMethodSimple != null)
+                                    {
+                                        try
+                                        {
+                                            removeMethodSimple.Invoke(inv, new object[] { invItemObj });
+                                            LogDebugIf(VERBOSE_DEBUG, "Removed 1 item (RemoveItem(itemData) used).");
+                                            return;
+                                        }
+                                        catch (Exception ex) { LogDebugIf(VERBOSE_DEBUG, "RemoveItem(itemData) failed: " + ex); }
+                                    }
+
+                                    // fallback: decrement stack
+                                    var stackField = itemTypeInv.GetField("m_stack", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                                    if (stackField != null)
+                                    {
+                                        try
+                                        {
+                                            var stackVal = stackField.GetValue(invItemObj);
+                                            if (stackVal is int sv && sv > 1)
+                                            {
+                                                stackField.SetValue(invItemObj, sv - 1);
+                                                LogDebugIf(VERBOSE_DEBUG, "Decremented m_stack by 1 as a fallback removal.");
+                                                return;
+                                            }
+                                            else
+                                            {
+                                                LogDebugIf(VERBOSE_DEBUG, "m_stack present but not >1; cannot decrement to remove one reliably.");
+                                            }
+                                        }
+                                        catch (Exception ex) { LogWarning("m_stack decrement failed: " + ex); }
+                                    }
+
+                                    LogWarning("Could not remove item via any known method; item may remain in inventory.");
+                                }
+                                catch (Exception ex) { LogDebugIf(VERBOSE_DEBUG, "removeOne outer exception: " + ex); }
+                            };
+
+                            var configLines = plugin.GetConfiguredLines();
+                            LogDebugIf(VERBOSE_DEBUG, $"Configured lines count: {(configLines == null ? "<null>" : configLines.Count.ToString())}");
+
+                            if (configLines != null)
+                            {
                                 foreach (var line in configLines)
                                 {
                                     if (line == null || !line.IsActive)
                                     {
-                                        LogDebugIf (VERBOSE_DEBUG, "Skipping inactive or null config line.");
+                                        LogDebugIf(VERBOSE_DEBUG, "Skipping inactive or null config line.");
                                         continue;
                                     }
 
-                                    LogDebugIf (VERBOSE_DEBUG, $"Checking config line: ItemPrefab='{line.ItemPrefab}', IncreaseCraftPercentage={line.IncreaseCraftPercentage}");
+                                    LogDebugIf(VERBOSE_DEBUG, $"Checking config line: ItemPrefab='{line.ItemPrefab}', IncreaseCraftPercentage={line.IncreaseCraftPercentage}");
 
-                                    // Search inventory for an item matching line.ItemPrefab
                                     object matchedItemObj = null;
                                     int checkedCount = 0;
                                     foreach (var invObj in invItems)
@@ -1714,37 +1715,28 @@ namespace ChanceCraft
                                             break;
                                         }
                                     }
-                                    LogDebugIf (VERBOSE_DEBUG, $"Checked {checkedCount} inventory entries for prefab '{line.ItemPrefab}'.");
+                                    LogDebugIf(VERBOSE_DEBUG, $"Checked {checkedCount} inventory entries for prefab '{line.ItemPrefab}'.");
 
                                     if (matchedItemObj != null)
                                     {
-                                        // accumulate percentage and remove one instance
                                         totalModifiedPercentage += line.IncreaseCraftPercentage;
                                         foundAnyConfiguredMatch = true;
-                                        LogDebugIf (VERBOSE_DEBUG, $"Matched inventory prefab '{line.ItemPrefab}'. Increase +{line.IncreaseCraftPercentage}. Attempting to remove one instance.");
+                                        LogDebugIf(VERBOSE_DEBUG, $"Matched inventory prefab '{line.ItemPrefab}'. Increase +{line.IncreaseCraftPercentage}. Attempting to remove one instance.");
                                         removeOne(matchedItemObj);
-                                        LogDebugIf (VERBOSE_DEBUG, $"Attempted removal for '{line.ItemPrefab}'.");
-                                        // Note: don't break here; we continue to check other config lines to sum percentages and possibly remove other items.
+                                        LogDebugIf(VERBOSE_DEBUG, $"Attempted removal for '{line.ItemPrefab}'.");
                                     }
                                     else
                                     {
-                                        LogDebugIf (VERBOSE_DEBUG, $"No inventory match found for prefab '{line.ItemPrefab}'.");
+                                        LogDebugIf(VERBOSE_DEBUG, $"No inventory match found for prefab '{line.ItemPrefab}'.");
                                     }
-                                } // end foreach config lines
-                            } // end if invItems != null
-                        } // end if inv != null
-                    } // end if playerInv != null
-                } // end else plugin != null
-            } // end if !typeAllowed
-
-            // If the item type is not allowed and we did not find any configured match, then no effect should spawn.
-            if (typeAllowed || !foundAnyConfiguredMatch)
-            {
-                LogDebugIf (VERBOSE_DEBUG, "Item matcher criteriea and founded percentage increase item in inventory.");
-                return null;
+                                }
+                            }
+                        }
+                    }
+                }
             }
 
-            // Optionally log final total (plugin likely available here)
+            // No early return when no configured helper items are found; base chance still applies.
             try
             {
                 if (plugin != null && totalModifiedPercentage > 0f)
@@ -1752,7 +1744,7 @@ namespace ChanceCraft
                     LogInfo($"ChanceCraft: total modified percentage from inventory consumed items = {totalModifiedPercentage * 100f}%");
                 }
             }
-            catch (Exception ex) { LogDebugIf (VERBOSE_DEBUG, "Final logging failed: " + ex); }
+            catch (Exception ex) { LogDebugIf(VERBOSE_DEBUG, "Final logging failed: " + ex); }
 
             if (foundAnyConfiguredMatch)
             {
@@ -1760,12 +1752,10 @@ namespace ChanceCraft
                 string text = $"<color=yellow>Crafting percentage increased by {percent:0.##}%</color>";
                 LogInfo("Displaying HUD message to player: " + text);
 
-                // Preferred: MessageHud
                 if (MessageHud.instance != null)
                 {
                     MessageHud.instance.ShowMessage(MessageHud.MessageType.Center, text);
                 }
-                // Fallback: Player message (if local player exists)
                 else if (Player.m_localPlayer != null)
                 {
                     Player.m_localPlayer.Message(MessageHud.MessageType.Center, text);
@@ -1774,6 +1764,7 @@ namespace ChanceCraft
 
             var player = Player.m_localPlayer;
 
+            // Base chances by type
             float craftChance = 0.6f;
             float upgradeChance = 0.6f;
 
@@ -1799,6 +1790,7 @@ namespace ChanceCraft
                 upgradeChance = arrowSuccessUpgrade.Value;
             }
 
+            // Apply extra percentage from config (already clamped to reasonable sums in plugin helpers)
             craftChance = Mathf.Clamp01(craftChance + totalModifiedPercentage);
 
             int qualityLevel = selectedRecipe.m_item?.m_itemData?.m_quality ?? 1;
@@ -1965,6 +1957,7 @@ namespace ChanceCraft
             }
             else
             {
+                // Failure path & revert logic kept as-is (unchanged)
                 if (isUpgradeCall || ChanceCraftRecipeHelpers.IsUpgradeOperation(gui, selectedRecipe) || _isUpgradeDetected || isUpgradeNow)
                 {
                     try
@@ -2247,7 +2240,6 @@ namespace ChanceCraft
                 }
             }
         }
-
         #endregion
 
         private static bool ShouldTreatAsUpgrade(InventoryGui gui, Recipe selectedRecipe, bool isUpgradeCall)
