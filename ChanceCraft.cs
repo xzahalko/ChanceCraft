@@ -1746,22 +1746,6 @@ namespace ChanceCraft
             }
             catch (Exception ex) { LogDebugIf(VERBOSE_DEBUG, "Final logging failed: " + ex); }
 
-            if (foundAnyConfiguredMatch)
-            {
-                float percent = totalModifiedPercentage * 100f;
-                string text = $"<color=yellow>Crafting percentage increased by {percent:0.##}%</color>";
-                LogInfo("Displaying HUD message to player: " + text);
-
-                if (MessageHud.instance != null)
-                {
-                    MessageHud.instance.ShowMessage(MessageHud.MessageType.Center, text);
-                }
-                else if (Player.m_localPlayer != null)
-                {
-                    Player.m_localPlayer.Message(MessageHud.MessageType.Center, text);
-                }
-            }
-
             var player = Player.m_localPlayer;
 
             // Base chances by type
@@ -1951,6 +1935,22 @@ namespace ChanceCraft
                         catch (Exception ex) { LogWarning($"TrySpawnCraftEffect success removal exception: {ex}"); }
 
                         ClearCapturedUpgradeGui();
+                    }
+                    
+                    if (foundAnyConfiguredMatch)
+                    {
+                        float percent = totalModifiedPercentage * 100f;                        
+                        String text = $"<color=yellow>Percentage increased by {percent:0.##}%</color>";
+                        LogInfo("Displaying HUD message to player: " + text);
+
+                        if (MessageHud.instance != null)
+                        {
+                            MessageHud.instance.ShowMessage(MessageHud.MessageType.Center, text);
+                        }
+                        else if (Player.m_localPlayer != null)
+                        {
+                            Player.m_localPlayer.Message(MessageHud.MessageType.Center, text);
+                        }
                     }
                     return null;
                 }
@@ -2233,7 +2233,23 @@ namespace ChanceCraft
                     catch { }
 
                     try { ChanceCraftResourceHelpers.RemoveRequiredResources(gui, Player.m_localPlayer, selectedRecipe, false, false); } catch { }
-                    try { Player.m_localPlayer?.Message(MessageHud.MessageType.Center, "<color=red>Crafting failed!</color>"); } catch { }
+                    string text = "<color=red>Crafting failed!</color>";
+
+                    if (foundAnyConfiguredMatch)
+                    {
+                        float percent = totalModifiedPercentage * 100f;
+                        text = $"<color=red>Crafting failed even percentage increased by {percent:0.##}%</color>";
+                        LogInfo("Displaying HUD message to player: " + text);
+                    } 
+
+                    if (MessageHud.instance != null)
+                    {
+                        MessageHud.instance.ShowMessage(MessageHud.MessageType.Center, text);
+                    }
+                    else if (Player.m_localPlayer != null)
+                    {
+                        Player.m_localPlayer.Message(MessageHud.MessageType.Center, text);
+                    }
 
                     ClearCapturedUpgradeGui();
                     return selectedRecipe;
